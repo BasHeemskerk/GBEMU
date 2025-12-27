@@ -29,7 +29,7 @@ Output: `gbemu.3dsx`
 
 ## Usage
 
-1. Place ROMs in `sdmc:/roms/` on your 3DS SD card
+1. Place ROMs in `sdmc:/gb_roms/` on your 3DS SD card
 2. Launch the homebrew
 3. Select a ROM
 4. Play
