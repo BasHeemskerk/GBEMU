@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <cstddef>
 
+#include "../gb/included/state.hpp"
+
 constexpr int GB_SCREEN_WIDTH = 160;
 constexpr int GB_SCREEN_HEIGHT = 144;
 
@@ -58,9 +60,11 @@ public:
     bool loadSRAM(const char* filepath);
 
 private:
+    gb::GBState state;
     bool romLoaded;
-
+    
     void updateInput();
+    void handleInterrupts();
 };
 
 #endif

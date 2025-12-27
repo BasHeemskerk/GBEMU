@@ -33,14 +33,12 @@ namespace gb {
             switch (mode) {
                 case MODE_OAM:
                     if (ppu.scanlineCycles >= CYCLES_OAM) {
-                        ppu.scanlineCycles -= CYCLES_OAM;
                         io[memory::IO_STAT] = (stat & 0xFC) | MODE_DRAWING;
                     }
                     break;
 
                 case MODE_DRAWING:
-                    if (ppu.scanlineCycles >= CYCLES_DRAWING) {
-                        ppu.scanlineCycles -= CYCLES_DRAWING;
+                    if (ppu.scanlineCycles >= CYCLES_OAM + CYCLES_DRAWING) {
                         renderScanline(state);
                         io[memory::IO_STAT] = (stat & 0xFC) | MODE_HBLANK;
                         if (stat & 0x08) {
@@ -50,8 +48,8 @@ namespace gb {
                     break;
 
                 case MODE_HBLANK:
-                    if (ppu.scanlineCycles >= CYCLES_HBLANK) {
-                        ppu.scanlineCycles -= CYCLES_HBLANK;
+                    if (ppu.scanlineCycles >= CYCLES_SCANLINE) {
+                        ppu.scanlineCycles -= CYCLES_SCANLINE;
                         io[memory::IO_LY]++;
                         ly = io[memory::IO_LY];
 
@@ -154,7 +152,9 @@ namespace gb {
                 uint8_t hi = mem.vram[tileAddr + 1];
 
                 uint8_t bit = 7 - pixelX;
-                uint8_t colorNum = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
+                uint8_t loBit = (lo >> bit) & 1;
+                uint8_t hiBit = (hi >> bit) & 1;
+                uint8_t colorNum = (hiBit << 1) | loBit;
                 uint8_t color = getColor(bgp, colorNum);
 
                 ppu.framebuffer[ly * SCREEN_WIDTH + screenX] = color;
@@ -206,7 +206,9 @@ namespace gb {
                 uint8_t hi = mem.vram[tileAddr + 1];
 
                 uint8_t bit = 7 - pixelX;
-                uint8_t colorNum = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
+                uint8_t loBit = (lo >> bit) & 1;
+                uint8_t hiBit = (hi >> bit) & 1;
+                uint8_t colorNum = (hiBit << 1) | loBit;
                 uint8_t color = getColor(bgp, colorNum);
 
                 ppu.framebuffer[ly * SCREEN_WIDTH + screenX] = color;
@@ -224,8 +226,8 @@ namespace gb {
             int spriteHeight = (lcdc & 0x04) ? 16 : 8;
 
             for (int i = 39; i >= 0; i--) {
-                uint8_t y = mem.oam[i * 4] - 16;
-                uint8_t x = mem.oam[i * 4 + 1] - 8;
+                int y = mem.oam[i * 4] - 16;
+                int x = mem.oam[i * 4 + 1] - 8;
                 uint8_t tileNum = mem.oam[i * 4 + 2];
                 uint8_t flags = mem.oam[i * 4 + 3];
 
@@ -251,7 +253,9 @@ namespace gb {
                     if (screenX < 0 || screenX >= SCREEN_WIDTH) continue;
 
                     uint8_t bit = flipX ? px : (7 - px);
-                    uint8_t colorNum = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
+                    uint8_t loBit = (lo >> bit) & 1;
+                    uint8_t hiBit = (hi >> bit) & 1;
+                    uint8_t colorNum = (hiBit << 1) | loBit;
 
                     if (colorNum == 0) continue;
 

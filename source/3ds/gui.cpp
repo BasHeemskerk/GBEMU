@@ -1,35 +1,35 @@
-#include "include/gui.hpp"
-#include "gb/included/gb.hpp"
-#include "gb/included/state.hpp"
+// 3ds/gui.cpp
+#include "gui.hpp"
+#include "../wrapper/included/gameboy.hpp"
 #include <dirent.h>
 #include <cstring>
 #include <cstdio>
-#include <cmath>
 #include <algorithm>
+
+extern GameBoy gb_obj;
 
 namespace gui {
 
     State currentState;
     std::vector<std::string> romList;
     int selectedRom;
-    int scrollOffset;
-    int animFrame;
-    bool scannedOnce = false;
+    
+    static int scrollOffset;
+    static int animFrame;
+    static bool scannedOnce = false;
 
-    const u32 COL_BG_DARK = 0xFF0D0D1A;
-    const u32 COL_BG_MID = 0xFF1A1A2E;
-    const u32 COL_BG_LIGHT = 0xFF25253D;
-    const u32 COL_ACCENT = 0xFF00E676;
-    const u32 COL_WHITE = 0xFFFFFFFF;
-    const u32 COL_GRAY = 0xFF888888;
-    const u32 COL_DARK_GRAY = 0xFF444444;
-    const u32 COL_SELECTED = 0xFF2D4A6E;
+    // Colors
+    static constexpr u32 COL_BG_DARK   = 0xFF0D0D1A;
+    static constexpr u32 COL_BG_MID    = 0xFF1A1A2E;
+    static constexpr u32 COL_BG_LIGHT  = 0xFF25253D;
+    static constexpr u32 COL_ACCENT    = 0xFF00E676;
+    static constexpr u32 COL_WHITE     = 0xFFFFFFFF;
+    static constexpr u32 COL_GRAY      = 0xFF888888;
+    static constexpr u32 COL_DARK_GRAY = 0xFF444444;
+    static constexpr u32 COL_SELECTED  = 0xFF2D4A6E;
 
-    const u8 gbColors[4][3] = {
-        {155, 188, 15}, {139, 172, 15}, {48, 98, 48}, {15, 56, 15}
-    };
-
-    const uint8_t font8x8[96][8] = {
+    // 8x8 font
+    static const uint8_t font8x8[96][8] = {
         {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00},{0x18,0x18,0x18,0x18,0x18,0x00,0x18,0x00},
         {0x6C,0x6C,0x24,0x00,0x00,0x00,0x00,0x00},{0x6C,0x6C,0xFE,0x6C,0xFE,0x6C,0x6C,0x00},
         {0x18,0x3E,0x60,0x3C,0x06,0x7C,0x18,0x00},{0x00,0x66,0xAC,0xD8,0x36,0x6A,0xCC,0x00},
@@ -80,88 +80,8 @@ namespace gui {
         {0x72,0x9C,0x00,0x00,0x00,0x00,0x00,0x00},{0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00},
     };
 
-    void doScan() {
-        romList.clear();
-        scanForRoms("romfs:/");
-        scanForRoms("sdmc:/3ds/gb_roms");
-        scanForRoms("sdmc:/gb_roms");
-        scanForRoms("sdmc:/roms");
-        scanForRoms("/3ds/gb_roms");
-        std::sort(romList.begin(), romList.end());
-        romList.erase(std::unique(romList.begin(), romList.end()), romList.end());
-    }
-
-    void initialize() {
-        currentState = State::MAIN_MENU;
-        selectedRom = 0;
-        scrollOffset = 0;
-        animFrame = 0;
-        romList.clear();
-        scannedOnce = false;
-    }
-
-    void scanForRoms(const char* directory) {
-        DIR* dir = opendir(directory);
-        if (!dir) return;
-        struct dirent* entry;
-        while ((entry = readdir(dir)) != NULL) {
-            std::string filename = entry->d_name;
-            size_t len = filename.length();
-            if (len > 3) {
-                std::string ext = filename.substr(len - 3);
-                std::string ext4 = len > 4 ? filename.substr(len - 4) : "";
-                for (char& c : ext) c = tolower(c);
-                for (char& c : ext4) c = tolower(c);
-                if (ext == ".gb" || ext4 == ".gbc") {
-                    romList.push_back(std::string(directory) + "/" + filename);
-                }
-            }
-        }
-        closedir(dir);
-    }
-
-    void update() {
-        u32 kDown = hidKeysDown();
-        animFrame++;
-        if (!scannedOnce) { doScan(); scannedOnce = true; }
-
-        switch (currentState) {
-            case State::MAIN_MENU:
-                if (kDown & KEY_A) {
-                    if (romList.empty()) doScan();
-                    if (!romList.empty()) {
-                        currentState = State::ROM_SELECT;
-                        selectedRom = 0;
-                        scrollOffset = 0;
-                    }
-                }
-                break;
-            case State::ROM_SELECT:
-                if (kDown & KEY_UP && selectedRom > 0) {
-                    selectedRom--;
-                    if (selectedRom < scrollOffset) scrollOffset = selectedRom;
-                }
-                if (kDown & KEY_DOWN && selectedRom < (int)romList.size() - 1) {
-                    selectedRom++;
-                    if (selectedRom >= scrollOffset + VISIBLE_ITEMS) scrollOffset = selectedRom - VISIBLE_ITEMS + 1;
-                }
-                if (kDown & KEY_A) {
-                    gb::initialize();
-                    if (gb::loadROM(romList[selectedRom].c_str())) currentState = State::RUNNING;
-                }
-                if (kDown & KEY_B) currentState = State::MAIN_MENU;
-                break;
-            case State::RUNNING:
-                if (kDown & KEY_SELECT) currentState = State::PAUSED;
-                break;
-            case State::PAUSED:
-                if (kDown & KEY_A) currentState = State::RUNNING;
-                if (kDown & KEY_B) currentState = State::ROM_SELECT;
-                break;
-        }
-    }
-
-    void drawRect(u8* fb, int x, int y, int w, int h, u32 color, bool top) {
+    // Drawing functions
+    static void drawRect(u8* fb, int x, int y, int w, int h, u32 color, bool top) {
         u8 r = (color >> 16) & 0xFF, g = (color >> 8) & 0xFF, b = color & 0xFF;
         int sH = 240, sW = top ? 400 : 320;
         for (int py = y; py < y + h && py < sH; py++) {
@@ -173,7 +93,7 @@ namespace gui {
         }
     }
 
-    void drawRectGradient(u8* fb, int x, int y, int w, int h, u32 cT, u32 cB, bool top) {
+    static void drawRectGradient(u8* fb, int x, int y, int w, int h, u32 cT, u32 cB, bool top) {
         int sH = 240, sW = top ? 400 : 320;
         for (int py = y; py < y + h && py < sH; py++) {
             float t = (float)(py - y) / (float)h;
@@ -188,7 +108,7 @@ namespace gui {
         }
     }
 
-    void drawText(u8* fb, int x, int y, const char* text, u32 color, bool large, bool top) {
+    static void drawText(u8* fb, int x, int y, const char* text, u32 color, bool large, bool top) {
         u8 r = (color >> 16) & 0xFF, g = (color >> 8) & 0xFF, b = color & 0xFF;
         int scale = large ? 2 : 1, cx = x, sH = 240, sW = top ? 400 : 320;
         while (*text) {
@@ -215,14 +135,47 @@ namespace gui {
         }
     }
 
-    void drawTextCentered(u8* fb, int y, const char* text, u32 color, bool large, bool top) {
+    static void drawTextCentered(u8* fb, int y, const char* text, u32 color, bool large, bool top) {
         int sW = top ? 400 : 320, cW = large ? 16 : 8, tW = strlen(text) * cW;
         drawText(fb, (sW - tW) / 2, y, text, color, large, top);
     }
 
-    void drawMainMenu() {
+    // ROM scanning
+    static void scanForRoms(const char* directory) {
+        DIR* dir = opendir(directory);
+        if (!dir) return;
+        struct dirent* entry;
+        while ((entry = readdir(dir)) != NULL) {
+            std::string filename = entry->d_name;
+            size_t len = filename.length();
+            if (len > 3) {
+                std::string ext = filename.substr(len - 3);
+                std::string ext4 = len > 4 ? filename.substr(len - 4) : "";
+                for (char& c : ext) c = tolower(c);
+                for (char& c : ext4) c = tolower(c);
+                if (ext == ".gb" || ext4 == ".gbc") {
+                    romList.push_back(std::string(directory) + "/" + filename);
+                }
+            }
+        }
+        closedir(dir);
+    }
+
+    static void doScan() {
+        romList.clear();
+        scanForRoms("romfs:/");
+        scanForRoms("sdmc:/3ds/gb_roms");
+        scanForRoms("sdmc:/gb_roms");
+        scanForRoms("sdmc:/roms");
+        std::sort(romList.begin(), romList.end());
+        romList.erase(std::unique(romList.begin(), romList.end()), romList.end());
+    }
+
+    // Screen renderers
+    static void drawMainMenu() {
         u8* ft = gfxGetFramebuffer(GFX_TOP, GFX_LEFT, NULL, NULL);
         u8* fb = gfxGetFramebuffer(GFX_BOTTOM, GFX_LEFT, NULL, NULL);
+        
         drawRectGradient(ft, 0, 0, 400, 240, COL_BG_DARK, COL_BG_MID, true);
         int lineX = (animFrame * 2) % 500 - 50;
         drawRect(ft, lineX, 50, 100, 3, COL_ACCENT, true);
@@ -231,12 +184,16 @@ namespace gui {
         drawTextCentered(ft, 102, "EMULATOR", 0xFF000000, true, true);
         drawTextCentered(ft, 100, "EMULATOR", COL_WHITE, true, true);
         drawTextCentered(ft, 150, "for Nintendo 3DS", COL_GRAY, false, true);
-        char dbg[64]; snprintf(dbg, sizeof(dbg), "ROMs found: %d", (int)romList.size());
+        
+        char dbg[64];
+        snprintf(dbg, sizeof(dbg), "ROMs found: %d", (int)romList.size());
         drawTextCentered(ft, 180, dbg, COL_ACCENT, false, true);
         drawText(ft, 10, 220, "v1.0", COL_DARK_GRAY, false, true);
+        
         drawRectGradient(fb, 0, 0, 320, 240, COL_BG_MID, COL_BG_DARK, false);
         drawRect(fb, 40, 60, 240, 80, COL_BG_LIGHT, false);
         drawRect(fb, 42, 62, 236, 76, COL_BG_DARK, false);
+        
         u32 pulse = (animFrame / 30) % 2 ? COL_ACCENT : COL_WHITE;
         if (romList.empty()) {
             drawTextCentered(fb, 85, "No ROMs found!", 0xFFFF4444, false, false);
@@ -244,16 +201,18 @@ namespace gui {
         } else {
             drawTextCentered(fb, 90, "Press A to Start", pulse, false, false);
         }
-        drawTextCentered(fb, 170, "ROMs: /3ds/gb_roms/ or romfs:/", COL_GRAY, false, false);
+        drawTextCentered(fb, 170, "ROMs: /3ds/gb_roms/", COL_GRAY, false, false);
         drawTextCentered(fb, 220, "SELECT+START to exit", COL_DARK_GRAY, false, false);
     }
 
-    void drawRomSelect() {
+    static void drawRomSelect() {
         u8* ft = gfxGetFramebuffer(GFX_TOP, GFX_LEFT, NULL, NULL);
         u8* fb = gfxGetFramebuffer(GFX_BOTTOM, GFX_LEFT, NULL, NULL);
+        
         drawRectGradient(ft, 0, 0, 400, 240, COL_BG_DARK, COL_BG_MID, true);
         drawRect(ft, 0, 0, 400, 45, COL_BG_LIGHT, true);
         drawTextCentered(ft, 12, "ROM SELECTION", COL_ACCENT, true, true);
+        
         if (!romList.empty() && selectedRom < (int)romList.size()) {
             std::string path = romList[selectedRom];
             size_t sl = path.find_last_of('/');
@@ -262,10 +221,13 @@ namespace gui {
             drawRect(ft, 32, 72, 336, 56, COL_BG_DARK, true);
             if (fn.length() > 30) fn = fn.substr(0, 27) + "...";
             drawTextCentered(ft, 92, fn.c_str(), COL_ACCENT, false, true);
-            char cs[32]; snprintf(cs, sizeof(cs), "%d / %d", selectedRom + 1, (int)romList.size());
+            
+            char cs[32];
+            snprintf(cs, sizeof(cs), "%d / %d", selectedRom + 1, (int)romList.size());
             drawTextCentered(ft, 150, cs, COL_WHITE, false, true);
         }
         drawTextCentered(ft, 200, "A: Load   B: Back   D-Pad: Navigate", COL_GRAY, false, true);
+        
         drawRectGradient(fb, 0, 0, 320, 240, COL_BG_MID, COL_BG_DARK, false);
         int sY = 10, iH = 26;
         for (int i = 0; i < VISIBLE_ITEMS && (scrollOffset + i) < (int)romList.size(); i++) {
@@ -280,6 +242,7 @@ namespace gui {
             if (fn.length() > 32) fn = fn.substr(0, 29) + "...";
             drawText(fb, 15, y + 7, fn.c_str(), (ri == selectedRom) ? COL_WHITE : COL_GRAY, false, false);
         }
+        
         if (romList.size() > VISIBLE_ITEMS) {
             int bH = 200, bY = 20;
             int tH = std::max(20, (int)((VISIBLE_ITEMS * bH) / romList.size()));
@@ -289,15 +252,21 @@ namespace gui {
         }
     }
 
-    void drawPauseMenu() {
+    static void drawPauseMenu() {
         u8* ft = gfxGetFramebuffer(GFX_TOP, GFX_LEFT, NULL, NULL);
         u8* fb = gfxGetFramebuffer(GFX_BOTTOM, GFX_LEFT, NULL, NULL);
-        renderGameScreen();
-        for (int y = 0; y < 240; y++) for (int x = 0; x < 400; x++) {
-            int idx = ((x * 240) + (239 - y)) * 3;
-            ft[idx] /= 3; ft[idx+1] /= 3; ft[idx+2] /= 3;
+        
+        // Dim the game screen
+        for (int y = 0; y < 240; y++) {
+            for (int x = 0; x < 400; x++) {
+                int idx = ((x * 240) + (239 - y)) * 3;
+                ft[idx] /= 3;
+                ft[idx+1] /= 3;
+                ft[idx+2] /= 3;
+            }
         }
         drawTextCentered(ft, 100, "PAUSED", COL_ACCENT, true, true);
+        
         drawRectGradient(fb, 0, 0, 320, 240, COL_BG_MID, COL_BG_DARK, false);
         drawRect(fb, 50, 50, 220, 140, COL_BG_LIGHT, false);
         drawRect(fb, 52, 52, 216, 136, COL_BG_DARK, false);
@@ -306,74 +275,116 @@ namespace gui {
         drawTextCentered(fb, 135, "B: Exit to Menu", COL_GRAY, false, false);
     }
 
-    void renderGameScreen() {
+    static void renderGameScreen() {
         u8* fb = gfxGetFramebuffer(GFX_TOP, GFX_LEFT, NULL, NULL);
-        uint8_t* gbFramebuffer = gb::getFramebuffer();
+        const uint8_t* gbFB = gb_obj.getFramebuffer();
 
-        // GB: 160x144, Target: fill 240 height
-        // Scale: 240/144 = 1.666... 
-        // We'll use nearest neighbor scaling
-
-        // border color
-        const u8 borderB = 15, borderG = 40, borderR = 15;
-        
-        // GB colors
         static const u8 gbColorsR[4] = {155, 139, 48, 15};
         static const u8 gbColorsG[4] = {188, 172, 98, 56};
         static const u8 gbColorsB[4] = {15, 15, 48, 15};
 
-        // scaled dimensions: 160 * 1.5 = 240, 144 * 1.666 = 240
-        // let's use different X and Y scale to fill screen
-        // scaleY = 240/144 = 1.6666
-        // scaleX = let's keep aspect ratio: 160 * 1.6666 = 266
-        
+        const u8 borderR = 15, borderG = 40, borderB = 15;
         const int outW = 266;
-        const int outH = 240;
-        const int offsetX = (400 - outW) / 2;  // center horizontally = 67
-        const int offsetY = 0;
+        const int offsetX = (400 - outW) / 2;
 
         for (int screenY = 0; screenY < 240; screenY++) {
             int fbRowBase = 239 - screenY;
-            
-            // which GB row?
             int gbY = (screenY * 144) / 240;
             if (gbY >= 144) gbY = 143;
-            
+
             for (int screenX = 0; screenX < 400; screenX++) {
                 int idx = (screenX * 240 + fbRowBase) * 3;
-                
-                // check if in game area
+
                 if (screenX < offsetX || screenX >= offsetX + outW) {
                     fb[idx] = borderB;
-                    fb[idx + 1] = borderG;
-                    fb[idx + 2] = borderR;
+                    fb[idx+1] = borderG;
+                    fb[idx+2] = borderR;
                 } else {
-                    // which GB column?
                     int gbX = ((screenX - offsetX) * 160) / outW;
                     if (gbX >= 160) gbX = 159;
-                    
-                    uint8_t ci = gbFramebuffer[gbY * 160 + gbX];
-                    ci &= 0x03;
-                    
+
+                    uint8_t ci = gbFB[gbY * 160 + gbX] & 0x03;
                     fb[idx] = gbColorsB[ci];
-                    fb[idx + 1] = gbColorsG[ci];
-                    fb[idx + 2] = gbColorsR[ci];
+                    fb[idx+1] = gbColorsG[ci];
+                    fb[idx+2] = gbColorsR[ci];
                 }
             }
         }
     }
 
-    void render() {
+    // Public functions
+    void initialize() {
+        currentState = State::MAIN_MENU;
+        selectedRom = 0;
+        scrollOffset = 0;
+        animFrame = 0;
+        romList.clear();
+        scannedOnce = false;
+    }
+
+    void update() {
+        u32 kDown = hidKeysDown();
+        animFrame++;
+        
+        if (!scannedOnce) {
+            doScan();
+            scannedOnce = true;
+        }
+
         switch (currentState) {
-            case State::MAIN_MENU: drawMainMenu(); break;
-            case State::ROM_SELECT: drawRomSelect(); break;
-            case State::PAUSED: drawPauseMenu(); break;
-            case State::RUNNING: renderGameScreen(); break;
+            case State::MAIN_MENU:
+                if (kDown & KEY_A) {
+                    if (romList.empty()) doScan();
+                    if (!romList.empty()) {
+                        currentState = State::ROM_SELECT;
+                        selectedRom = 0;
+                        scrollOffset = 0;
+                    }
+                }
+                break;
+
+            case State::ROM_SELECT:
+                if (kDown & KEY_UP && selectedRom > 0) {
+                    selectedRom--;
+                    if (selectedRom < scrollOffset) scrollOffset = selectedRom;
+                }
+                if (kDown & KEY_DOWN && selectedRom < (int)romList.size() - 1) {
+                    selectedRom++;
+                    if (selectedRom >= scrollOffset + VISIBLE_ITEMS) {
+                        scrollOffset = selectedRom - VISIBLE_ITEMS + 1;
+                    }
+                }
+                if (kDown & KEY_A) {
+                    gb_obj.reset();
+                    if (gb_obj.loadROM(romList[selectedRom].c_str())) {
+                        currentState = State::RUNNING;
+                    }
+                }
+                if (kDown & KEY_B) {
+                    currentState = State::MAIN_MENU;
+                }
+                break;
+
+            case State::RUNNING:
+                if (kDown & KEY_SELECT) {
+                    currentState = State::PAUSED;
+                }
+                break;
+
+            case State::PAUSED:
+                if (kDown & KEY_A) currentState = State::RUNNING;
+                if (kDown & KEY_B) currentState = State::ROM_SELECT;
+                break;
         }
     }
 
-    std::string getSelectedRomPath() {
-        if (selectedRom >= 0 && selectedRom < (int)romList.size()) return romList[selectedRom];
-        return "";
+    void render() {
+        switch (currentState) {
+            case State::MAIN_MENU:  drawMainMenu(); break;
+            case State::ROM_SELECT: drawRomSelect(); break;
+            case State::RUNNING:    renderGameScreen(); break;
+            case State::PAUSED:     renderGameScreen(); drawPauseMenu(); break;
+        }
     }
+
 }
