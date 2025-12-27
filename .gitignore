@@ -1,0 +1,22 @@
+# Build outputs
+*.3dsx
+*.cia
+*.elf
+*.smdh
+build/
+
+# Object files
+*.o
+*.d
+
+# IDE
+.vscode/
+*.swp
+*~
+
+# macOS
+.DS_Store
+
+# ROMs (don't accidentally commit these)
+*.gb
+*.gbc
