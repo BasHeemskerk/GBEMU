@@ -4,27 +4,13 @@
 #include <cstdint>
 
 namespace gb{
+
+    struct GBState;
+
     namespace joypad{
-        // button states (0 = pressed, 1 = released)
-        // Game Boy uses active-low logic
-        extern bool buttonA;
-        extern bool buttonB;
-        extern bool buttonStart;
-        extern bool buttonSelect;
-        extern bool dpadUp;
-        extern bool dpadDown;
-        extern bool dpadLeft;
-        extern bool dpadRight;
-
-        //selection state from p1 register
-        extern bool selectButtons;
-        extern bool selectDpad;
-
-        //functions
-        void initialize();
-        void update(); //called from main loop to read the 3ds buttons
-        uint8_t read(); //returns p1 reg value
-        void write(uint8_t value); //sets selection bits
+        void initialize(GBState& state);
+        uint8_t read(GBState& state);
+        void write(GBState& state, uint8_t value);
     }
 }
 

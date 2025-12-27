@@ -1,88 +1,54 @@
 #include "included/joypad.hpp"
-#include "included/memory.hpp"
-#include <3ds.h>
+#include "included/state.hpp"
 
 namespace gb{
     namespace joypad{
-        bool buttonA;
-        bool buttonB;
-        bool buttonStart;
-        bool buttonSelect;
-        bool dpadUp;
-        bool dpadDown;
-        bool dpadLeft;
-        bool dpadRight;
 
-        bool selectButtons;
-        bool selectDpad;
+        void initialize(GBState& state){
+            auto& jp = state.joypad;
 
-        void initialize(){
-            //all buttons released, active low, so true = released
-            buttonA = true;
-            buttonB = true;
-            buttonStart = true;
-            buttonSelect = true;
-            dpadUp = true;
-            dpadDown = true;
-            dpadLeft = true;
-            dpadRight = true;
-
-            selectButtons = false;
-            selectDpad = false;
+            jp.buttonA = false;
+            jp.buttonB = false;
+            jp.buttonStart = false;
+            jp.buttonSelect = false;
+            jp.dpadUp = false;
+            jp.dpadDown = false;
+            jp.dpadLeft = false;
+            jp.dpadRight = false;
+            jp.selectButtons = false;
+            jp.selectDpad = false;
         }
 
-        void update(){
-            hidScanInput();
-            u32 held = hidKeysHeld();
+        uint8_t read(GBState& state){
+            auto& jp = state.joypad;
+            uint8_t result = 0x0F; //lower nibble high by default
 
-            // map 3DS buttons to Game Boy (active-low: false = pressed)
-            buttonA = !(held & KEY_A);
-            buttonB = !(held & KEY_B);
-            buttonStart = !(held & KEY_START);
-            buttonSelect = !(held & KEY_SELECT);
-            dpadUp = !(held & KEY_DUP);
-            dpadDown = !(held & KEY_DDOWN);
-            dpadLeft = !(held & KEY_DLEFT);
-            dpadRight = !(held & KEY_DRIGHT);
-
-            // check if any button was pressed - request joypad interrupt
-            if (!buttonA || !buttonB || !buttonStart || !buttonSelect ||
-                !dpadUp || !dpadDown || !dpadLeft || !dpadRight) {
-                memory::io[memory::IO_IF] |= 0x10;  // bit 4 = joypad interrupt
-            }
-        }
-
-        uint8_t read() {
-            uint8_t result = 0xFF;
-
-            if (selectButtons) {
-                // bit 5 low = buttons selected
-                result &= ~0x20;
-
-                if (!buttonA)      result &= ~0x01;
-                if (!buttonB)      result &= ~0x02;
-                if (!buttonSelect) result &= ~0x04;
-                if (!buttonStart)  result &= ~0x08;
+            if (jp.selectButtons) {
+                if (jp.buttonA)      result &= ~0x01;
+                if (jp.buttonB)      result &= ~0x02;
+                if (jp.buttonSelect) result &= ~0x04;
+                if (jp.buttonStart)  result &= ~0x08;
             }
 
-            if (selectDpad) {
-                // bit 4 low = d-pad selected
-                result &= ~0x10;
-
-                if (!dpadRight) result &= ~0x01;
-                if (!dpadLeft)  result &= ~0x02;
-                if (!dpadUp)    result &= ~0x04;
-                if (!dpadDown)  result &= ~0x08;
+            if (jp.selectDpad) {
+                if (jp.dpadRight) result &= ~0x01;
+                if (jp.dpadLeft)  result &= ~0x02;
+                if (jp.dpadUp)    result &= ~0x04;
+                if (jp.dpadDown)  result &= ~0x08;
             }
+
+            // Set upper bits based on selection
+            if (!jp.selectButtons) result |= 0x20;
+            if (!jp.selectDpad)    result |= 0x10;
 
             return result;
         }
 
-        void write(uint8_t value) {
-            // bits 4-5 select which group to read
-            // 0 = selected, 1 = not selected (active-low)
-            selectButtons = !(value & 0x20);
-            selectDpad = !(value & 0x10);
+        void write(GBState& state, uint8_t value){
+            auto& jp = state.joypad;
+
+            jp.selectButtons = !(value & 0x20);
+            jp.selectDpad = !(value & 0x10);
         }
     }
 }

@@ -1,57 +1,29 @@
 #include "included/apu.hpp"
-#include "included/memory.hpp"
-#include <3ds.h>
+#include "included/state.hpp"
 #include <cstring>
 
-namespace gb{
-    namespace apu{
-        //audio buffer
-        int16_t audioBuffer[BUFFER_SIZE * 2];
-        int bufferPosition;
+namespace gb {
+    namespace apu {
 
-        //timing
-        int sampleCycles;
-        int frameSequencerCycles;
-        int frameSequencerStep;
-
-        //channels
-        Channel1 ch1;
-        Channel2 ch2;
-        Channel3 ch3;
-        Channel4 ch4;
-
-        //master control
-        bool masterEnable;
-        int masterVolumeLeft;
-        int masterVolumeRight;
-
-        //panning
-        bool ch1Left, ch1Right;
-        bool ch2Left, ch2Right;
-        bool ch3Left, ch3Right;
-        bool ch4Left, ch4Right;
-
-        //3ds audio
-        ndspWaveBuf waveBuf[2];
-        int16_t* audioBufferData[2];
-        int currentBuffer = 0;
-
-        //duty cycle patterns for square waves
+        // Duty cycle patterns for square waves
         const uint8_t dutyPatterns[4] = {
-            0b00000001,  // 12.5% duty
-            0b00000011,  // 25% duty
-            0b00001111,  // 50% duty
-            0b11111100   // 75% duty
+            0b00000001,  // 12.5%
+            0b00000011,  // 25%
+            0b00001111,  // 50%
+            0b11111100   // 75%
         };
 
-        void initialize(){
-            memset(audioBuffer, 0, sizeof(audioBuffer));
-            bufferPosition = 0;
-            sampleCycles = 0;
-            frameSequencerCycles = 0;
-            frameSequencerStep = 0;
+        void initialize(GBState& state) {
+            auto& apu = state.apu;
 
-            // reset channel 1
+            memset(apu.audioBuffer, 0, sizeof(apu.audioBuffer));
+            apu.bufferPosition = 0;
+            apu.sampleCycles = 0;
+            apu.frameSequencerCycles = 0;
+            apu.frameSequencerStep = 0;
+
+            // Reset channel 1
+            auto& ch1 = apu.ch1;
             ch1.enabled = false;
             ch1.frequency = 0;
             ch1.frequencyTimer = 0;
@@ -68,7 +40,8 @@ namespace gb{
             ch1.shadowFrequency = 0;
             ch1.lengthCounter = 0;
 
-            // reset channel 2
+            // Reset channel 2
+            auto& ch2 = apu.ch2;
             ch2.enabled = false;
             ch2.frequency = 0;
             ch2.frequencyTimer = 0;
@@ -80,7 +53,8 @@ namespace gb{
             ch2.envelopeIncrease = false;
             ch2.lengthCounter = 0;
 
-            // reset channel 3
+            // Reset channel 3
+            auto& ch3 = apu.ch3;
             ch3.enabled = false;
             ch3.dacEnabled = false;
             ch3.frequency = 0;
@@ -89,7 +63,8 @@ namespace gb{
             ch3.volume = 0;
             ch3.lengthCounter = 0;
 
-            // reset channel 4
+            // Reset channel 4
+            auto& ch4 = apu.ch4;
             ch4.enabled = false;
             ch4.volume = 0;
             ch4.envelopeTimer = 0;
@@ -102,93 +77,63 @@ namespace gb{
             ch4.lfsr = 0x7FFF;
             ch4.lengthCounter = 0;
 
-            // master control
-            masterEnable = true;
-            masterVolumeLeft = 7;
-            masterVolumeRight = 7;
+            // Master control
+            apu.masterEnable = true;
+            apu.masterVolumeLeft = 7;
+            apu.masterVolumeRight = 7;
 
-            // panning - all channels to both speakers
-            ch1Left = ch1Right = true;
-            ch2Left = ch2Right = true;
-            ch3Left = ch3Right = true;
-            ch4Left = ch4Right = true;
+            // Panning - all channels to both speakers
+            apu.ch1Left = apu.ch1Right = true;
+            apu.ch2Left = apu.ch2Right = true;
+            apu.ch3Left = apu.ch3Right = true;
+            apu.ch4Left = apu.ch4Right = true;
         }
 
-        void initAudio() {
-            Result rc = ndspInit();
-            if (R_FAILED(rc)) {
-                // audio init failed, disable audio
-                masterEnable = false;
-                return;
-            }
-            
-            ndspSetOutputMode(NDSP_OUTPUT_STEREO);
-            ndspChnSetInterp(0, NDSP_INTERP_LINEAR);
-            ndspChnSetRate(0, SAMPLE_RATE);
-            ndspChnSetFormat(0, NDSP_FORMAT_STEREO_PCM16);
+        void tick(GBState& state, int cycles) {
+            auto& apu = state.apu;
 
-            for (int i = 0; i < 2; i++) {
-                audioBufferData[i] = (int16_t*)linearAlloc(BUFFER_SIZE * 2 * sizeof(int16_t));
-                memset(audioBufferData[i], 0, BUFFER_SIZE * 2 * sizeof(int16_t));
-
-                waveBuf[i].data_vaddr = audioBufferData[i];
-                waveBuf[i].nsamples = BUFFER_SIZE;
-                waveBuf[i].looping = false;
-                waveBuf[i].status = NDSP_WBUF_FREE;
-            }
-
-            currentBuffer = 0;
-        }
-
-        void exitAudio() {
-            // only exit if audio was initialized
-            if (audioBufferData[0] != nullptr) {
-                ndspExit();
-                for (int i = 0; i < 2; i++) {
-                    if (audioBufferData[i]) {
-                        linearFree(audioBufferData[i]);
-                        audioBufferData[i] = nullptr;
-                    }
-                }
-            }
-        }
-
-        void tick(int cycles){
-            if (!masterEnable){
+            if (!apu.masterEnable) {
                 return;
             }
 
-            frameSequencerCycles += cycles;
-            while (frameSequencerCycles >= 8192){
-                frameSequencerCycles -= 8192;
-                tickFrameSequencer();
+            apu.frameSequencerCycles += cycles;
+            while (apu.frameSequencerCycles >= 8192) {
+                apu.frameSequencerCycles -= 8192;
+                tickFrameSequencer(state);
             }
 
-            sampleCycles += cycles;
-            while (sampleCycles >= CYCLES_PER_SAMPLE){
-                sampleCycles -= CYCLES_PER_SAMPLE;
-                generateSample();
+            apu.sampleCycles += cycles;
+            while (apu.sampleCycles >= CYCLES_PER_SAMPLE) {
+                apu.sampleCycles -= CYCLES_PER_SAMPLE;
+                generateSample(state);
             }
         }
 
-        void tickFrameSequencer(){
-            switch (frameSequencerStep) {
+        void tickFrameSequencer(GBState& state) {
+            auto& apu = state.apu;
+            auto& io = state.memory.io;
+            auto& ch1 = apu.ch1;
+            auto& ch2 = apu.ch2;
+            auto& ch3 = apu.ch3;
+            auto& ch4 = apu.ch4;
+
+            switch (apu.frameSequencerStep) {
                 case 0:
                 case 4:
-                    // length counter
-                    if (ch1.lengthCounter > 0 && (memory::io[0x14] & 0x40)) {
+                    // Length counter
+                    if (ch1.lengthCounter > 0 && (io[0x14] & 0x40)) {
                         ch1.lengthCounter--;
                         if (ch1.lengthCounter == 0) ch1.enabled = false;
                     }
-                    if (ch2.lengthCounter > 0 && (memory::io[0x19] & 0x40)) {
+                    if (ch2.lengthCounter > 0 && (io[0x19] & 0x40)) {
                         ch2.lengthCounter--;
                         if (ch2.lengthCounter == 0) ch2.enabled = false;
                     }
-                    if (ch3.lengthCounter > 0 && (memory::io[0x1E] & 0x40)) {
+                    if (ch3.lengthCounter > 0 && (io[0x1E] & 0x40)) {
                         ch3.lengthCounter--;
                         if (ch3.lengthCounter == 0) ch3.enabled = false;
                     }
-                    if (ch4.lengthCounter > 0 && (memory::io[0x23] & 0x40)) {
+                    if (ch4.lengthCounter > 0 && (io[0x23] & 0x40)) {
                         ch4.lengthCounter--;
                         if (ch4.lengthCounter == 0) ch4.enabled = false;
                     }
@@ -196,30 +141,31 @@ namespace gb{
 
                 case 2:
                 case 6:
-                    // length counter
-                    if (ch1.lengthCounter > 0 && (memory::io[0x14] & 0x40)) {
+                    // Length counter
+                    if (ch1.lengthCounter > 0 && (io[0x14] & 0x40)) {
                         ch1.lengthCounter--;
                         if (ch1.lengthCounter == 0) ch1.enabled = false;
                     }
-                    if (ch2.lengthCounter > 0 && (memory::io[0x19] & 0x40)) {
+                    if (ch2.lengthCounter > 0 && (io[0x19] & 0x40)) {
                         ch2.lengthCounter--;
                         if (ch2.lengthCounter == 0) ch2.enabled = false;
                     }
-                    if (ch3.lengthCounter > 0 && (memory::io[0x1E] & 0x40)) {
+                    if (ch3.lengthCounter > 0 && (io[0x1E] & 0x40)) {
                         ch3.lengthCounter--;
                         if (ch3.lengthCounter == 0) ch3.enabled = false;
                     }
-                    if (ch4.lengthCounter > 0 && (memory::io[0x23] & 0x40)) {
+                    if (ch4.lengthCounter > 0 && (io[0x23] & 0x40)) {
                         ch4.lengthCounter--;
                         if (ch4.lengthCounter == 0) ch4.enabled = false;
                     }
 
-                    // sweep (channel 1 only)
+                    // Sweep (channel 1 only)
                     if (ch1.sweepPeriod > 0) {
                         ch1.sweepTimer--;
                         if (ch1.sweepTimer <= 0) {
-                            ch1.sweepTimer = ch1.sweepPeriod;
-                            if (ch1.sweepShift > 0) {
+                            ch1.sweepTimer = ch1.sweepPeriod > 0 ? ch1.sweepPeriod : 8;
+
+                            if (ch1.sweepPeriod > 0) {
                                 int newFreq = ch1.shadowFrequency >> ch1.sweepShift;
                                 if (ch1.sweepNegate) {
                                     newFreq = ch1.shadowFrequency - newFreq;
@@ -229,9 +175,9 @@ namespace gb{
 
                                 if (newFreq > 2047) {
                                     ch1.enabled = false;
-                                } else if (newFreq >= 0) {
-                                    ch1.frequency = newFreq;
+                                } else if (ch1.sweepShift > 0) {
                                     ch1.shadowFrequency = newFreq;
+                                    ch1.frequency = newFreq;
                                 }
                             }
                         }
@@ -239,7 +185,7 @@ namespace gb{
                     break;
 
                 case 7:
-                    // envelope
+                    // Envelope
                     if (ch1.envelopePeriod > 0) {
                         ch1.envelopeTimer--;
                         if (ch1.envelopeTimer <= 0) {
@@ -276,171 +222,133 @@ namespace gb{
                     break;
             }
 
-            frameSequencerStep = (frameSequencerStep + 1) & 7;
-
+            apu.frameSequencerStep = (apu.frameSequencerStep + 1) & 7;
         }
 
-        void tickChannel1(){
+        void tickChannel1(GBState& state) {
+            auto& ch1 = state.apu.ch1;
+
             ch1.frequencyTimer--;
-            if (ch1.frequencyTimer <= 0){
+            if (ch1.frequencyTimer <= 0) {
                 ch1.frequencyTimer = (2048 - ch1.frequency) * 4;
                 ch1.dutyPosition = (ch1.dutyPosition + 1) & 7;
             }
         }
 
-        void tickChannel2(){
+        void tickChannel2(GBState& state) {
+            auto& ch2 = state.apu.ch2;
+
             ch2.frequencyTimer--;
-            if (ch2.frequencyTimer <= 0){
+            if (ch2.frequencyTimer <= 0) {
                 ch2.frequencyTimer = (2048 - ch2.frequency) * 4;
                 ch2.dutyPosition = (ch2.dutyPosition + 1) & 7;
             }
         }
 
-        void tickChannel3(){
+        void tickChannel3(GBState& state) {
+            auto& ch3 = state.apu.ch3;
+
             ch3.frequencyTimer--;
-            if (ch3.frequencyTimer <= 0){
+            if (ch3.frequencyTimer <= 0) {
                 ch3.frequencyTimer = (2048 - ch3.frequency) * 2;
                 ch3.position = (ch3.position + 1) & 31;
             }
         }
 
-        void tickChannel4(){
+        void tickChannel4(GBState& state) {
+            auto& ch4 = state.apu.ch4;
+
             ch4.frequencyTimer--;
-            if (ch4.frequencyTimer <= 0){
-                //calculate timer reload
+            if (ch4.frequencyTimer <= 0) {
                 int divisor = ch4.divisor == 0 ? 8 : ch4.divisor * 16;
                 ch4.frequencyTimer = divisor << ch4.shiftAmount;
 
-                //lfsr
-                uint8_t xorResult = (ch4.lfsr & 1) ^ ((ch4.lfsr >> 1) & 1);
-                ch4.lfsr = (ch4.lfsr >> 1) | (xorResult << 14);
+                uint8_t bit = (ch4.lfsr & 1) ^ ((ch4.lfsr >> 1) & 1);
+                ch4.lfsr = (ch4.lfsr >> 1) | (bit << 14);
 
                 if (ch4.widthMode) {
-                    ch4.lfsr &= ~(1 << 6);
-                    ch4.lfsr |= xorResult << 6;
+                    ch4.lfsr &= ~0x40;
+                    ch4.lfsr |= bit << 6;
                 }
             }
         }
 
-        void generateSample(){
-            int16_t left;
-            int16_t right;
+        void generateSample(GBState& state) {
+            auto& apu = state.apu;
+            auto& mem = state.memory;
 
-            //square with sweep
-            if (ch1.enabled){
-                tickChannel1();
-                uint8_t duty = dutyPatterns[ch1.duty];
-                int sample = (duty >> ch1.dutyPosition) & 1 ? ch1.volume : -ch1.volume;
-                if (ch1Left){
-                    left += sample;
-                }
-                if (ch1Right){
-                    right += sample;
-                }
+            tickChannel1(state);
+            tickChannel2(state);
+            tickChannel3(state);
+            tickChannel4(state);
+
+            int16_t left = 0;
+            int16_t right = 0;
+
+            // Channel 1
+            if (apu.ch1.enabled) {
+                uint8_t duty = dutyPatterns[apu.ch1.duty];
+                int sample = (duty >> apu.ch1.dutyPosition) & 1 ? apu.ch1.volume : -apu.ch1.volume;
+                if (apu.ch1Left) left += sample;
+                if (apu.ch1Right) right += sample;
             }
 
-            //square
-            if (ch2.enabled){
-                tickChannel2();
-                uint8_t duty = dutyPatterns[ch2.duty];
-                int sample = (duty >> ch2.dutyPosition) & 1 ? ch2.volume : -ch2.volume;
-                if (ch2Left){
-                    left += sample;
-                }
-                if (ch2Right){
-                    right += sample;
-                }
+            // Channel 2
+            if (apu.ch2.enabled) {
+                uint8_t duty = dutyPatterns[apu.ch2.duty];
+                int sample = (duty >> apu.ch2.dutyPosition) & 1 ? apu.ch2.volume : -apu.ch2.volume;
+                if (apu.ch2Left) left += sample;
+                if (apu.ch2Right) right += sample;
             }
 
-            //wave
-            if (ch3.enabled & ch3.dacEnabled){
-                tickChannel3();
+            // Channel 3
+            if (apu.ch3.enabled && apu.ch3.dacEnabled) {
+                uint8_t sampleByte = mem.io[0x30 + (apu.ch3.position / 2)];
+                uint8_t sample4bit = (apu.ch3.position & 1) ? (sampleByte & 0x0F) : (sampleByte >> 4);
 
-                //wave ram is at 0xFF30-0xFF3F
-                uint8_t waveByte = memory::io[0x30 + (ch3.position / 2)];
-                uint8_t sample;
-                if (ch3.position & 1){
-                    sample = waveByte & 0x0F;
-                } else {
-                    sample = waveByte >> 4;
+                int shift = 0;
+                switch (apu.ch3.volume) {
+                    case 0: shift = 4; break;
+                    case 1: shift = 0; break;
+                    case 2: shift = 1; break;
+                    case 3: shift = 2; break;
                 }
 
-                //apply volume shift
-                if (ch3.volume > 0){
-                    sample >>= (ch3.volume - 1);
-                } else {
-                    sample = 0;
-                }
-
-                int signedSample = sample - 0;
-                if (ch3Left){
-                    left += signedSample;
-                }
-                if (ch3Right){
-                    right += signedSample;
-                }
+                int sample = (sample4bit >> shift) - 8;
+                if (apu.ch3Left) left += sample;
+                if (apu.ch3Right) right += sample;
             }
 
-            //noise
-            if (ch4.enabled){
-                tickChannel4();
-                int sample = (ch4.lfsr & 1) ? -ch4.volume : ch4.volume;
-                if (ch4Left){
-                    left += sample;
-                }
-                if (ch4Right){
-                    right += sample;
-                }
+            // Channel 4
+            if (apu.ch4.enabled) {
+                int sample = (apu.ch4.lfsr & 1) ? -apu.ch4.volume : apu.ch4.volume;
+                if (apu.ch4Left) left += sample;
+                if (apu.ch4Right) right += sample;
             }
 
-            //apply master volume
-            left *= (masterVolumeLeft + 1) * 32;
-            right *= (masterVolumeRight + 1) * 32;
+            // Apply master volume and scale to 16-bit
+            left = (left * apu.masterVolumeLeft * 64);
+            right = (right * apu.masterVolumeRight * 64);
 
-            //clamp
-            if (left > 32767) {
-                left = 32767;
-            }
-            if (left < -32768) {
-                left = -32768;
-            }
-            if (right > 32767) {
-                right = 32767;
-            }
-            if (right < -32768) {
-                right = -32768;
-            }
-
-            //store in buffer
-            audioBuffer[bufferPosition * 2] = left;
-            audioBuffer[bufferPosition * 2 + 1] = right;
-            bufferPosition++;
-
-            //flush on full buffer
-            if (bufferPosition >= BUFFER_SIZE){
-                flushBuffer();
-                bufferPosition = 0;
+            // Write to buffer
+            if (apu.bufferPosition < APUState::BUFFER_SIZE) {
+                apu.audioBuffer[apu.bufferPosition * 2] = left;
+                apu.audioBuffer[apu.bufferPosition * 2 + 1] = right;
+                apu.bufferPosition++;
             }
         }
 
-        void flushBuffer(){
-            //wait for free buffer
-            while(waveBuf[currentBuffer].status != NDSP_WBUF_FREE){
-                return;
-            }
+        void writeRegister(GBState& state, uint8_t reg, uint8_t value) {
+            auto& apu = state.apu;
+            auto& io = state.memory.io;
+            auto& ch1 = apu.ch1;
+            auto& ch2 = apu.ch2;
+            auto& ch3 = apu.ch3;
+            auto& ch4 = apu.ch4;
 
-            //copy data
-            memcpy(audioBufferData[currentBuffer], audioBuffer, BUFFER_SIZE * 2 * sizeof(int16_t));
-            DSP_FlushDataCache(audioBufferData[currentBuffer], BUFFER_SIZE * 2 * sizeof(int16_t));
+            // Store raw value in IO
+            io[reg] = value;
 
-            //queue buffer
-            ndspChnWaveBufAdd(0, &waveBuf[currentBuffer]);
-
-            //switch the buffers
-            currentBuffer = (currentBuffer + 1) % 2;
-        }
-
-        void writeRegister(uint8_t reg, uint8_t value) {
             switch (reg) {
                 // NR10 - Channel 1 sweep
                 case 0x10:
@@ -461,7 +369,6 @@ namespace gb{
                     ch1.envelopeIncrease = value & 0x08;
                     ch1.envelopePeriod = value & 0x07;
                     ch1.envelopeTimer = ch1.envelopePeriod;
-                    // DAC disabled if top 5 bits are 0
                     if ((value & 0xF8) == 0) {
                         ch1.enabled = false;
                     }
@@ -476,12 +383,11 @@ namespace gb{
                 case 0x14:
                     ch1.frequency = (ch1.frequency & 0xFF) | ((value & 0x07) << 8);
                     if (value & 0x80) {
-                        // trigger
                         ch1.enabled = true;
                         if (ch1.lengthCounter == 0) ch1.lengthCounter = 64;
                         ch1.frequencyTimer = (2048 - ch1.frequency) * 4;
                         ch1.envelopeTimer = ch1.envelopePeriod;
-                        ch1.volume = memory::io[0x12] >> 4;
+                        ch1.volume = io[0x12] >> 4;
                         ch1.shadowFrequency = ch1.frequency;
                         ch1.sweepTimer = ch1.sweepPeriod > 0 ? ch1.sweepPeriod : 8;
                     }
@@ -517,7 +423,7 @@ namespace gb{
                         if (ch2.lengthCounter == 0) ch2.lengthCounter = 64;
                         ch2.frequencyTimer = (2048 - ch2.frequency) * 4;
                         ch2.envelopeTimer = ch2.envelopePeriod;
-                        ch2.volume = memory::io[0x17] >> 4;
+                        ch2.volume = io[0x17] >> 4;
                     }
                     break;
 
@@ -586,33 +492,33 @@ namespace gb{
                         int divisor = ch4.divisor == 0 ? 8 : ch4.divisor * 16;
                         ch4.frequencyTimer = divisor << ch4.shiftAmount;
                         ch4.envelopeTimer = ch4.envelopePeriod;
-                        ch4.volume = memory::io[0x21] >> 4;
+                        ch4.volume = io[0x21] >> 4;
                         ch4.lfsr = 0x7FFF;
                     }
                     break;
 
                 // NR50 - Master volume
                 case 0x24:
-                    masterVolumeLeft = (value >> 4) & 0x07;
-                    masterVolumeRight = value & 0x07;
+                    apu.masterVolumeLeft = (value >> 4) & 0x07;
+                    apu.masterVolumeRight = value & 0x07;
                     break;
 
                 // NR51 - Channel panning
                 case 0x25:
-                    ch4Left = value & 0x80;
-                    ch3Left = value & 0x40;
-                    ch2Left = value & 0x20;
-                    ch1Left = value & 0x10;
-                    ch4Right = value & 0x08;
-                    ch3Right = value & 0x04;
-                    ch2Right = value & 0x02;
-                    ch1Right = value & 0x01;
+                    apu.ch4Left = value & 0x80;
+                    apu.ch3Left = value & 0x40;
+                    apu.ch2Left = value & 0x20;
+                    apu.ch1Left = value & 0x10;
+                    apu.ch4Right = value & 0x08;
+                    apu.ch3Right = value & 0x04;
+                    apu.ch2Right = value & 0x02;
+                    apu.ch1Right = value & 0x01;
                     break;
 
                 // NR52 - Master enable
                 case 0x26:
-                    masterEnable = value & 0x80;
-                    if (!masterEnable) {
+                    apu.masterEnable = value & 0x80;
+                    if (!apu.masterEnable) {
                         ch1.enabled = false;
                         ch2.enabled = false;
                         ch3.enabled = false;
@@ -622,20 +528,23 @@ namespace gb{
             }
         }
 
-        uint8_t readRegister(uint8_t reg){
-            switch (reg){
-                case 0x26:
-                    {
-                        uint8_t status = masterEnable ? 0x80 : 0x00;
-                        if (ch1.enabled) status |= 0x01;
-                        if (ch2.enabled) status |= 0x02;
-                        if (ch3.enabled) status |= 0x04;
-                        if (ch4.enabled) status |= 0x08;
-                        return status | 0x70;
-                    }
+        uint8_t readRegister(GBState& state, uint8_t reg) {
+            auto& apu = state.apu;
+            auto& io = state.memory.io;
+
+            switch (reg) {
+                case 0x26: {
+                    uint8_t status = apu.masterEnable ? 0x80 : 0x00;
+                    if (apu.ch1.enabled) status |= 0x01;
+                    if (apu.ch2.enabled) status |= 0x02;
+                    if (apu.ch3.enabled) status |= 0x04;
+                    if (apu.ch4.enabled) status |= 0x08;
+                    return status | 0x70;
+                }
                 default:
-                    return memory::io[reg];
+                    return io[reg];
             }
         }
+
     }
 }

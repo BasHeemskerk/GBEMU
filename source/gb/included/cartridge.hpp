@@ -4,42 +4,21 @@
 #include <cstdint>
 
 namespace gb{
+
+    struct GBState;
+
     namespace cartridge{
-        //mapper types
-        enum class MapperType{
-            NONE,
-            MBC1,
-            MBC3,
-            MBC5
-        };
+        void initialize(GBState& state);
+        bool loadRom(GBState& state, const char* filePath);
+        void cleanup(GBState& state);
 
-        //rom and ram storage
-        constexpr int MAX_ROM_SIZE = 8 * 1024 * 1024;
-        constexpr int MAX_RAM_SIZE = 128 * 1024;
+        uint8_t read(GBState& state, uint16_t address);
+        void write(GBState& state, uint16_t address, uint8_t value);
 
-        extern uint8_t rom[MAX_ROM_SIZE];
-        extern uint8_t ram[MAX_RAM_SIZE];
-        extern int romSize;
-        extern int ramSize;
+        uint8_t readRAM(GBState& state, uint16_t address);
+        void writeRAM(GBState& state, uint16_t address, uint8_t value);
 
-        //mapper state
-        extern MapperType mapper;
-        extern int romBank;
-        extern int ramBank;
-        extern bool ramEnabled;
-        extern int mbcMode;
-
-        //game info
-        extern char title[17];
-
-        //functions
-        void initialize();
-        bool loadRom(const char* filePath);
-        uint8_t read(uint16_t address);
-        void write(uint16_t address, uint8_t value);
-        uint8_t readRAM(uint16_t address);
-        void writeRAM(uint16_t address, uint8_t value);
-        const char* getTitle();
+        const char* getTitle(GBState& state);
     }
 }
 

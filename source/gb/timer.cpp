@@ -1,59 +1,47 @@
 #include "included/timer.hpp"
-#include "included/memory.hpp"
+#include "included/state.hpp"
 
 namespace gb{
     namespace timer{
-        uint16_t divCounter;
-        uint16_t timaCounter;
 
-        void initialize(){
-            divCounter = 0;
-            timaCounter = 0;
+        //clock select values (cycles per tima increment)
+        static const int clockSelect[] = { 1024, 16, 64, 256 };
+
+        void initialize(GBState& state){
+            state.timer.divCycles = 0;
+            state.timer.timaCycles = 0;
         }
 
-        void tick(int cycles){
-            // increments every 256 cycles
-            divCounter += cycles;
-            
-            while (divCounter >= 256){
-                divCounter -= 256;
-                memory::io[memory::IO_DIV]++;
+        void tick(GBState& state, int cycles){
+
+            auto& timer = state.timer;
+            auto& io = state.memory.io;
+
+            //update div (incr every 256 cycles)
+            timer.divCycles += cycles;
+            while(timer.divCycles >= 256){
+                timer.divCycles -= 256;
+                io[REG_DIV]++;
             }
 
-            // check if timer is enabled (bit 2 of TAC)
-            uint8_t tac = memory::io[memory::IO_TAC];
-            if (!(tac & 0x04)){
+            //check if timer is enabled
+            if (!(io[REG_TAC] & 0x04)){
                 return;
             }
 
-            // get timer frequency from TAC bits 0-1
-            // 00 = 4096 Hz   (every 1024 cycles)
-            // 01 = 262144 Hz (every 16 cycles)
-            // 10 = 65536 Hz  (every 64 cycles)
-            // 11 = 16384 Hz  (every 256 cycles)
-            int threshold;
-            switch (tac & 0x03){
-                case 0: threshold = 1024; break;
-                case 1: threshold = 16; break;
-                case 2: threshold = 64; break;
-                case 3: threshold = 256; break;
-                default: threshold = 1024; break;
-            }
+            //get clock select
+            int clockDivider = clockSelect[io[REG_TAC] & 0x03];
 
-            //update time
-            timaCounter += cycles;
-            while (timaCounter >= threshold){
-                timaCounter -= threshold;
+            //update tima
+            timer.timaCycles += cycles;
+            while (timer.timaCycles >= clockDivider){
+                timer.timaCycles -= clockDivider;
+                io[REG_TIMA]++;
 
-                memory::io[memory::IO_TIMA]++;
-
-                //check for overflow
-                if (memory::io[memory::IO_TIMA] == 0){
-                    //reload from tma
-                    memory::io[memory::IO_TIMA] = memory::io[memory::IO_TMA];
-
-                    //request timer interrupt (bit 2 of IF)
-                    memory::io[memory::IO_IF] |= 0x04;
+                //overflow - reload from tma and request interrupt
+                if (io[REG_TIMA] == 0){
+                    io[REG_TIMA] = io[REG_TMA];
+                    io[0x0F] |= 0x04; //request the timer interrupt
                 }
             }
         }

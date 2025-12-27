@@ -4,17 +4,19 @@
 #include <cstdint>
 
 namespace gb{
-    namespace timer{
-        // internal counter for DIV register
-        // DIV increments every 256 cycles (16384 Hz)
-        extern uint16_t divCounter;
 
-        //internal counter for tima
-        extern uint16_t timaCounter;
+    struct GBState;
+
+    namespace timer{
+        //timer registers in IO
+        constexpr uint8_t REG_DIV = 0x04; //divider
+        constexpr uint8_t REG_TIMA = 0x05; //timer counter
+        constexpr uint8_t REG_TMA = 0x06; //timer module
+        constexpr uint8_t REG_TAC = 0x07; //timer control
 
         //functions
-        void initialize();
-        void tick(int cycles);
+        void initialize(GBState& state);
+        void tick(GBState& state, int cycles);
     }
 }
 

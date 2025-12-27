@@ -1,280 +1,285 @@
 #include "included/ppu.hpp"
+#include "included/state.hpp"
 #include "included/memory.hpp"
-#include <3ds.h>
-#include <cstring>
+#include "../include/headers.hpp"
 
 namespace gb {
     namespace ppu {
 
-        uint8_t framebuffer[SCREEN_WIDTH * SCREEN_HEIGHT];
-        bool frameReady;
-        int scanlineCycles;
+        void initialize(GBState& state){
+            auto& ppu = state.ppu;
 
-        void initialize() {
-            memset(framebuffer, 0, sizeof(framebuffer));
-            frameReady = false;
-            scanlineCycles = 0;
+            memset(ppu.framebuffer, 0, sizeof(ppu.framebuffer));
+            ppu.frameReady = false;
+            ppu.scanlineCycles = 0;
         }
 
-        void tick(int cycles) {
-            if (!(memory::io[memory::IO_LCDC] & 0x80)) {
+        void tick(GBState& state, int cycles){
+            auto& ppu = state.ppu;
+            auto& io = state.memory.io;
+
+            uint8_t lcdc = io[memory::IO_LCDC];
+
+            //lcd disabled
+            if (!(lcdc & 0x80)){
                 return;
             }
 
-            scanlineCycles += cycles;
+            ppu.scanlineCycles += cycles;
 
-            uint8_t stat = memory::io[memory::IO_STAT];
+            uint8_t stat = io[memory::IO_STAT];
             uint8_t mode = stat & 0x03;
-            uint8_t ly = memory::io[memory::IO_LY];
+            uint8_t ly = io[memory::IO_LY];
 
             switch (mode) {
                 case MODE_OAM:
-                    if (scanlineCycles >= CYCLES_OAM) {
-                        // FIX: was (stat = 0xFC), should be (stat & 0xFC)
-                        memory::io[memory::IO_STAT] = (stat & 0xFC) | MODE_DRAWING;
+                    if (ppu.scanlineCycles >= CYCLES_OAM) {
+                        ppu.scanlineCycles -= CYCLES_OAM;
+                        io[memory::IO_STAT] = (stat & 0xFC) | MODE_DRAWING;
                     }
                     break;
 
                 case MODE_DRAWING:
-                    if (scanlineCycles >= CYCLES_OAM + CYCLES_DRAWING) {
-                        renderScanline();
-                        memory::io[memory::IO_STAT] = (stat & 0xFC) | MODE_HBLANK;
+                    if (ppu.scanlineCycles >= CYCLES_DRAWING) {
+                        ppu.scanlineCycles -= CYCLES_DRAWING;
 
+                        // Render the scanline
+                        renderScanline(state);
+
+                        // Enter HBlank
+                        io[memory::IO_STAT] = (stat & 0xFC) | MODE_HBLANK;
+
+                        // STAT HBlank interrupt
                         if (stat & 0x08) {
-                            memory::io[memory::IO_IF] |= 0x02;
+                            io[memory::IO_IF] |= 0x02;
                         }
                     }
                     break;
 
                 case MODE_HBLANK:
-                    if (scanlineCycles >= CYCLES_SCANLINE) {
-                        scanlineCycles -= CYCLES_SCANLINE;
-                        ly++;
-                        memory::io[memory::IO_LY] = ly;
+                    if (ppu.scanlineCycles >= CYCLES_HBLANK) {
+                        ppu.scanlineCycles -= CYCLES_HBLANK;
+                        io[memory::IO_LY]++;
+                        ly = io[memory::IO_LY];
 
-                        if (ly == SCANLINES_VISIBLE) {
-                            memory::io[memory::IO_STAT] = (stat & 0xFC) | MODE_VBLANK;
-                            frameReady = true;
-                            memory::io[memory::IO_IF] |= 0x01;
+                        if (ly >= SCANLINES_VISIBLE) {
+                            // Enter VBlank
+                            io[memory::IO_STAT] = (stat & 0xFC) | MODE_VBLANK;
+                            io[memory::IO_IF] |= 0x01;  // VBlank interrupt
 
+                            // STAT VBlank interrupt
                             if (stat & 0x10) {
-                                memory::io[memory::IO_IF] |= 0x02;
+                                io[memory::IO_IF] |= 0x02;
                             }
-                        } else {
-                            memory::io[memory::IO_STAT] = (stat & 0xFC) | MODE_OAM;
 
+                            ppu.frameReady = true;
+                        } else {
+                            // Next scanline
+                            io[memory::IO_STAT] = (stat & 0xFC) | MODE_OAM;
+
+                            // STAT OAM interrupt
                             if (stat & 0x20) {
-                                memory::io[memory::IO_IF] |= 0x02;
+                                io[memory::IO_IF] |= 0x02;
                             }
                         }
 
-                        checkLYC();
+                        checkLYC(state);
                     }
                     break;
 
                 case MODE_VBLANK:
-                    if (scanlineCycles >= CYCLES_SCANLINE) {
-                        scanlineCycles -= CYCLES_SCANLINE;
-                        ly++;
+                    if (ppu.scanlineCycles >= CYCLES_SCANLINE) {
+                        ppu.scanlineCycles -= CYCLES_SCANLINE;
+                        io[memory::IO_LY]++;
+                        ly = io[memory::IO_LY];
 
                         if (ly >= SCANLINES_TOTAL) {
-                            ly = 0;
-                            memory::io[memory::IO_STAT] = (stat & 0xFC) | MODE_OAM;
+                            // Back to top
+                            io[memory::IO_LY] = 0;
+                            io[memory::IO_STAT] = (stat & 0xFC) | MODE_OAM;
 
+                            // STAT OAM interrupt
                             if (stat & 0x20) {
-                                memory::io[memory::IO_IF] |= 0x02;
+                                io[memory::IO_IF] |= 0x02;
                             }
                         }
 
-                        memory::io[memory::IO_LY] = ly;
-                        checkLYC();
+                        checkLYC(state);
                     }
                     break;
             }
+
         }
 
-        void checkLYC() {
-            uint8_t ly = memory::io[memory::IO_LY];
-            uint8_t lyc = memory::io[memory::IO_LYC];
-            uint8_t stat = memory::io[memory::IO_STAT];
+        void checkLYC(GBState& state){
+            auto& io = state.memory.io;
+            uint8_t stat = io[memory::IO_STAT];
 
-            if (ly == lyc) {
-                memory::io[memory::IO_STAT] = stat | 0x04;
-
+            if (io[memory::IO_LY] == io[memory::IO_LYC]){
+                io[memory::IO_STAT] |= 0x04;  //coincidence flag
                 if (stat & 0x40) {
-                    memory::io[memory::IO_IF] |= 0x02;
+                    io[memory::IO_IF] |= 0x02;  // STAT interrupt
                 }
             } else {
-                memory::io[memory::IO_STAT] = stat & ~0x04;
+                io[memory::IO_STAT] &= ~0x04;
             }
         }
 
-        void renderScanline() {
-            uint8_t lcdc = memory::io[memory::IO_LCDC];
+        void renderScanline(GBState& state){
+            auto& io = state.memory.io;
+            uint8_t lcdc = io[memory::IO_LCDC];
 
-            if (lcdc & 0x01) {
-                renderBackground();
-            }
-
-            // FIX: was 0x29, should be 0x20
-            if (lcdc & 0x20) {
-                renderWindow();
-            }
-
-            if (lcdc & 0x02) {
-                renderSprites();
-            }
+            if (lcdc & 0x01) renderBackground(state);
+            if (lcdc & 0x20) renderWindow(state);
+            if (lcdc & 0x02) renderSprites(state);
         }
 
-        void renderBackground() {
-            uint8_t lcdc = memory::io[memory::IO_LCDC];
-            uint8_t scx = memory::io[memory::IO_SCX];
-            uint8_t scy = memory::io[memory::IO_SCY];
-            uint8_t ly = memory::io[memory::IO_LY];
-            uint8_t bgp = memory::io[memory::IO_BGP];
+        void renderBackground(GBState& state) {
+            auto& ppu = state.ppu;
+            auto& mem = state.memory;
+            auto& io = mem.io;
 
-            uint16_t tileMapBase = (lcdc & 0x08) ? 0x1C00 : 0x1800;
-            bool unsignedTiles = lcdc & 0x10;
-            uint16_t tileDataBase = unsignedTiles ? 0x0000 : 0x0800;
+            uint8_t lcdc = io[memory::IO_LCDC];
+            uint8_t ly = io[memory::IO_LY];
+            uint8_t scy = io[memory::IO_SCY];
+            uint8_t scx = io[memory::IO_SCX];
+            uint8_t bgp = io[memory::IO_BGP];
+
+            uint16_t tileMap = (lcdc & 0x08) ? 0x1C00 : 0x1800;
+            uint16_t tileData = (lcdc & 0x10) ? 0x0000 : 0x0800;
+            bool signedTiles = !(lcdc & 0x10);
 
             uint8_t y = ly + scy;
-            uint8_t tileRow = y / 8;
-            uint8_t pixelRow = y % 8;
+            uint8_t tileY = y / 8;
+            uint8_t pixelY = y % 8;
 
             for (int screenX = 0; screenX < SCREEN_WIDTH; screenX++) {
                 uint8_t x = screenX + scx;
-                uint8_t tileCol = x / 8;
-                uint8_t pixelCol = x % 8;
+                uint8_t tileX = x / 8;
+                uint8_t pixelX = x % 8;
 
-                uint16_t tileMapAddr = tileMapBase + (tileRow * 32) + tileCol;
-                uint8_t tileIndex = memory::vram[tileMapAddr];
+                uint16_t mapAddr = tileMap + (tileY * 32) + tileX;
+                uint8_t tileNum = mem.vram[mapAddr];
 
-                uint16_t tileDataAddr;
-                if (unsignedTiles) {
-                    tileDataAddr = tileDataBase + (tileIndex * 16);
+                uint16_t tileAddr;
+                if (signedTiles) {
+                    tileAddr = tileData + ((int8_t)tileNum + 128) * 16;
                 } else {
-                    int8_t signedIndex = (int8_t)tileIndex;
-                    tileDataAddr = tileDataBase + ((signedIndex + 128) * 16);
+                    tileAddr = tileData + tileNum * 16;
                 }
 
-                uint8_t byte1 = memory::vram[tileDataAddr + (pixelRow * 2)];
-                uint8_t byte2 = memory::vram[tileDataAddr + (pixelRow * 2) + 1];
+                tileAddr += pixelY * 2;
 
-                uint8_t bit = 7 - pixelCol;
-                uint8_t colorNum = ((byte2 >> bit) & 1) << 1 | ((byte1 >> bit) & 1);
+                uint8_t lo = mem.vram[tileAddr];
+                uint8_t hi = mem.vram[tileAddr + 1];
 
+                uint8_t bit = 7 - pixelX;
+                uint8_t colorNum = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
                 uint8_t color = getColor(bgp, colorNum);
-                framebuffer[ly * SCREEN_WIDTH + screenX] = color;
+
+                ppu.framebuffer[ly * SCREEN_WIDTH + screenX] = color;
             }
         }
 
-        void renderWindow() {
-            uint8_t lcdc = memory::io[memory::IO_LCDC];
-            uint8_t wx = memory::io[memory::IO_WX];
-            uint8_t wy = memory::io[memory::IO_WY];
-            uint8_t ly = memory::io[memory::IO_LY];
-            uint8_t bgp = memory::io[memory::IO_BGP];
+        void renderWindow(GBState& state) {
+            auto& ppu = state.ppu;
+            auto& mem = state.memory;
+            auto& io = mem.io;
 
-            int windowX = wx - 7;
+            uint8_t lcdc = io[memory::IO_LCDC];
+            uint8_t ly = io[memory::IO_LY];
+            uint8_t wy = io[memory::IO_WY];
+            uint8_t wx = io[memory::IO_WX];
+            uint8_t bgp = io[memory::IO_BGP];
 
-            if (ly < wy || windowX >= SCREEN_WIDTH) {
-                return;
-            }
+            if (ly < wy) return;
+            if (wx > 166) return;
 
-            uint16_t tileMapBase = (lcdc & 0x40) ? 0x1C00 : 0x1800;
-            bool unsignedTiles = lcdc & 0x10;
-            uint16_t tileDataBase = unsignedTiles ? 0x0000 : 0x0800;
+            uint16_t tileMap = (lcdc & 0x40) ? 0x1C00 : 0x1800;
+            uint16_t tileData = (lcdc & 0x10) ? 0x0000 : 0x0800;
+            bool signedTiles = !(lcdc & 0x10);
 
             uint8_t y = ly - wy;
-            uint8_t tileRow = y / 8;
-            uint8_t pixelRow = y % 8;
+            uint8_t tileY = y / 8;
+            uint8_t pixelY = y % 8;
 
-            for (int screenX = (windowX < 0 ? 0 : windowX); screenX < SCREEN_WIDTH; screenX++) {
-                int x = screenX - windowX;
-                uint8_t tileCol = x / 8;
-                uint8_t pixelCol = x % 8;
+            for (int screenX = 0; screenX < SCREEN_WIDTH; screenX++) {
+                int windowX = screenX - (wx - 7);
+                if (windowX < 0) continue;
 
-                uint16_t tileMapAddr = tileMapBase + (tileRow * 32) + tileCol;
-                uint8_t tileIndex = memory::vram[tileMapAddr];
+                uint8_t tileX = windowX / 8;
+                uint8_t pixelX = windowX % 8;
 
-                uint16_t tileDataAddr;
-                if (unsignedTiles) {
-                    tileDataAddr = tileDataBase + (tileIndex * 16);
+                uint16_t mapAddr = tileMap + (tileY * 32) + tileX;
+                uint8_t tileNum = mem.vram[mapAddr];
+
+                uint16_t tileAddr;
+                if (signedTiles) {
+                    tileAddr = tileData + ((int8_t)tileNum + 128) * 16;
                 } else {
-                    int8_t signedIndex = (int8_t)tileIndex;
-                    tileDataAddr = tileDataBase + ((signedIndex + 128) * 16);
+                    tileAddr = tileData + tileNum * 16;
                 }
 
-                uint8_t byte1 = memory::vram[tileDataAddr + (pixelRow * 2)];
-                uint8_t byte2 = memory::vram[tileDataAddr + (pixelRow * 2) + 1];
+                tileAddr += pixelY * 2;
 
-                uint8_t bit = 7 - pixelCol;
-                uint8_t colorNum = ((byte2 >> bit) & 1) << 1 | ((byte1 >> bit) & 1);
+                uint8_t lo = mem.vram[tileAddr];
+                uint8_t hi = mem.vram[tileAddr + 1];
 
+                uint8_t bit = 7 - pixelX;
+                uint8_t colorNum = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
                 uint8_t color = getColor(bgp, colorNum);
-                framebuffer[ly * SCREEN_WIDTH + screenX] = color;
+
+                ppu.framebuffer[ly * SCREEN_WIDTH + screenX] = color;
             }
         }
 
-        void renderSprites() {
-            uint8_t lcdc = memory::io[memory::IO_LCDC];
-            uint8_t ly = memory::io[memory::IO_LY];
+        void renderSprites(GBState& state) {
+            auto& ppu = state.ppu;
+            auto& mem = state.memory;
+            auto& io = mem.io;
+
+            uint8_t lcdc = io[memory::IO_LCDC];
+            uint8_t ly = io[memory::IO_LY];
 
             int spriteHeight = (lcdc & 0x04) ? 16 : 8;
-            int spriteCount = 0;
 
-            for (int i = 0; i < 40 && spriteCount < 10; i++) {
-                // FIX: use int for y to handle negative values properly
-                int spriteY = memory::oam[i * 4] - 16;
-                int spriteX = memory::oam[i * 4 + 1] - 8;
-                uint8_t tileIndex = memory::oam[i * 4 + 2];
-                uint8_t attrs = memory::oam[i * 4 + 3];
+            for (int i = 39; i >= 0; i--) {
+                uint8_t y = mem.oam[i * 4] - 16;
+                uint8_t x = mem.oam[i * 4 + 1] - 8;
+                uint8_t tileNum = mem.oam[i * 4 + 2];
+                uint8_t flags = mem.oam[i * 4 + 3];
 
-                // check if sprite is on this scanline
-                if ((int)ly < spriteY || (int)ly >= spriteY + spriteHeight) {
-                    continue;
-                }
+                if (ly < y || ly >= y + spriteHeight) continue;
+                if (x >= SCREEN_WIDTH) continue;
 
-                spriteCount++;
+                bool flipX = flags & 0x20;
+                bool flipY = flags & 0x40;
+                bool priority = flags & 0x80;
+                uint8_t palette = (flags & 0x10) ? io[memory::IO_OBP1] : io[memory::IO_OBP0];
 
-                bool flipX = attrs & 0x20;
-                bool flipY = attrs & 0x40;
-                bool priority = attrs & 0x80;
-                uint8_t palette = (attrs & 0x10) ? memory::io[memory::IO_OBP1] : memory::io[memory::IO_OBP0];
+                uint8_t tileY = ly - y;
+                if (flipY) tileY = spriteHeight - 1 - tileY;
 
-                int row = ly - spriteY;
-                if (flipY) {
-                    row = (spriteHeight - 1) - row;
-                }
+                if (spriteHeight == 16) tileNum &= 0xFE;
 
-                if (spriteHeight == 16) {
-                    tileIndex &= 0xFE;
-                }
+                uint16_t tileAddr = tileNum * 16 + tileY * 2;
+                uint8_t lo = mem.vram[tileAddr];
+                uint8_t hi = mem.vram[tileAddr + 1];
 
-                uint16_t tileDataAddr = (tileIndex * 16) + (row * 2);
-                uint8_t byte1 = memory::vram[tileDataAddr];
-                uint8_t byte2 = memory::vram[tileDataAddr + 1];
+                for (int px = 0; px < 8; px++) {
+                    int screenX = x + px;
+                    if (screenX < 0 || screenX >= SCREEN_WIDTH) continue;
 
-                for (int col = 0; col < 8; col++) {
-                    int screenX = spriteX + col;
+                    uint8_t bit = flipX ? px : (7 - px);
+                    uint8_t colorNum = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
 
-                    if (screenX < 0 || screenX >= SCREEN_WIDTH) {
-                        continue;
-                    }
+                    if (colorNum == 0) continue;  // Transparent
 
-                    int bit = flipX ? col : (7 - col);
-                    uint8_t colorNum = ((byte2 >> bit) & 1) << 1 | ((byte1 >> bit) & 1);
-
-                    if (colorNum == 0) {
-                        continue;
-                    }
-
-                    if (priority && framebuffer[ly * SCREEN_WIDTH + screenX] != 0) {
-                        continue;
-                    }
+                    // BG priority
+                    if (priority && ppu.framebuffer[ly * SCREEN_WIDTH + screenX] != 0) continue;
 
                     uint8_t color = getColor(palette, colorNum);
-                    framebuffer[ly * SCREEN_WIDTH + screenX] = color;
+                    ppu.framebuffer[ly * SCREEN_WIDTH + screenX] = color;
                 }
             }
         }
@@ -283,5 +288,5 @@ namespace gb {
             return (palette >> (colorNum * 2)) & 0x03;
         }
 
-    }  // namespace ppu
-}  // namespace gb
+    }  
+} 

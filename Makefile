@@ -35,9 +35,9 @@ include $(DEVKITARM)/3ds_rules
 #---------------------------------------------------------------------------------
 TARGET      := $(notdir $(CURDIR))
 BUILD       := build
-SOURCES     := source source/gb
+SOURCES     := source source/gb source/wrapper
 DATA        := data
-INCLUDES    := source/include source/gb/included
+INCLUDES    := source/include source/gb/included source/wrapper/included
 GRAPHICS    := gfx
 OUTPUT      := output
 RESOURCES   := resources
