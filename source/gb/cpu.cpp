@@ -5,10 +5,6 @@
 namespace gb {
     namespace cpu {
 
-        // ═══════════════════════════════════════════════════════════════════
-        // REGISTER PAIR HELPERS
-        // ═══════════════════════════════════════════════════════════════════
-
         static inline uint16_t getBC(GBState& state) { 
             return (state.cpu.B << 8) | state.cpu.C; 
         }
@@ -39,10 +35,6 @@ namespace gb {
             state.cpu.F = val & 0xF0; 
         }
 
-        // ═══════════════════════════════════════════════════════════════════
-        // FLAG HELPERS
-        // ═══════════════════════════════════════════════════════════════════
-
         static inline bool getFlag(GBState& state, uint8_t flag) { 
             return state.cpu.F & flag; 
         }
@@ -54,10 +46,6 @@ namespace gb {
                 state.cpu.F &= ~flag;
             }
         }
-
-        // ═══════════════════════════════════════════════════════════════════
-        // MEMORY ACCESS HELPERS
-        // ═══════════════════════════════════════════════════════════════════
 
         static inline uint8_t fetchByte(GBState& state) {
             uint8_t val = memory::read(state, state.cpu.PC);
@@ -88,10 +76,6 @@ namespace gb {
             return (high << 8) | low;
         }
 
-        // ═══════════════════════════════════════════════════════════════════
-        // INITIALIZATION
-        // ═══════════════════════════════════════════════════════════════════
-
         void initialize(GBState& state) {
             auto& cpu = state.cpu;
 
@@ -112,167 +96,170 @@ namespace gb {
             cpu.imeScheduled = false;
         }
 
+        inline uint8_t* getRegister(GBState& state, uint8_t index) {
+            switch (index) {
+                case 0: return &state.cpu.B;
+                case 1: return &state.cpu.C;
+                case 2: return &state.cpu.D;
+                case 3: return &state.cpu.E;
+                case 4: return &state.cpu.H;
+                case 5: return &state.cpu.L;
+                case 7: return &state.cpu.A;
+                default: return nullptr;
+            }
+        }
+
+        inline uint8_t rlc(GBState& state, uint8_t val) {
+            uint8_t result = (val << 1) | (val >> 7);
+            setFlag(state, FLAG_Z, result == 0);
+            setFlag(state, FLAG_N, false);
+            setFlag(state, FLAG_H, false);
+            setFlag(state, FLAG_C, val & 0x80);
+            return result;
+        }
+
+        inline uint8_t rrc(GBState& state, uint8_t val) {
+            uint8_t result = (val >> 1) | (val << 7);
+            setFlag(state, FLAG_Z, result == 0);
+            setFlag(state, FLAG_N, false);
+            setFlag(state, FLAG_H, false);
+            setFlag(state, FLAG_C, val & 0x01);
+            return result;
+        }
+
+        inline uint8_t rl(GBState& state, uint8_t val) {
+            uint8_t carry = getFlag(state, FLAG_C) ? 1 : 0;
+            uint8_t result = (val << 1) | carry;
+            setFlag(state, FLAG_Z, result == 0);
+            setFlag(state, FLAG_N, false);
+            setFlag(state, FLAG_H, false);
+            setFlag(state, FLAG_C, val & 0x80);
+            return result;
+        }
+
+        inline uint8_t rr(GBState& state, uint8_t val) {
+            uint8_t carry = getFlag(state, FLAG_C) ? 0x80 : 0;
+            uint8_t result = (val >> 1) | carry;
+            setFlag(state, FLAG_Z, result == 0);
+            setFlag(state, FLAG_N, false);
+            setFlag(state, FLAG_H, false);
+            setFlag(state, FLAG_C, val & 0x01);
+            return result;
+        }
+
+        inline uint8_t sla(GBState& state, uint8_t val) {
+            uint8_t result = val << 1;
+            setFlag(state, FLAG_Z, result == 0);
+            setFlag(state, FLAG_N, false);
+            setFlag(state, FLAG_H, false);
+            setFlag(state, FLAG_C, val & 0x80);
+            return result;
+        }
+
+        inline uint8_t sra(GBState& state, uint8_t val) {
+            uint8_t result = (val >> 1) | (val & 0x80);
+            setFlag(state, FLAG_Z, result == 0);
+            setFlag(state, FLAG_N, false);
+            setFlag(state, FLAG_H, false);
+            setFlag(state, FLAG_C, val & 0x01);
+            return result;
+        }
+
+        inline uint8_t swap(GBState& state, uint8_t val) {
+            uint8_t result = ((val & 0x0F) << 4) | ((val & 0xF0) >> 4);
+            setFlag(state, FLAG_Z, result == 0);
+            setFlag(state, FLAG_N, false);
+            setFlag(state, FLAG_H, false);
+            setFlag(state, FLAG_C, false);
+            return result;
+        }
+
+        inline uint8_t srl(GBState& state, uint8_t val) {
+            uint8_t result = val >> 1;
+            setFlag(state, FLAG_Z, result == 0);
+            setFlag(state, FLAG_N, false);
+            setFlag(state, FLAG_H, false);
+            setFlag(state, FLAG_C, val & 0x01);
+            return result;
+        }
+
+        inline void bit(GBState& state, uint8_t b, uint8_t val) {
+            setFlag(state, FLAG_Z, !(val & (1 << b)));
+            setFlag(state, FLAG_N, false);
+            setFlag(state, FLAG_H, true);
+        }
+
+        inline uint8_t res(uint8_t b, uint8_t val) {
+            return val & ~(1 << b);
+        }
+
+        inline uint8_t set(uint8_t b, uint8_t val) {
+            return val | (1 << b);
+        }
+
         // ═══════════════════════════════════════════════════════════════════
-        // CB PREFIX OPCODES
+        // CB Prefix Opcode Execution
         // ═══════════════════════════════════════════════════════════════════
 
-        int executeCB(GBState& state, uint8_t opcode) {
-            auto& cpu = state.cpu;
+        int executeCB(GBState& state) {
+            uint8_t opcode = fetchByte(state);
 
-            uint8_t* reg = nullptr;
-            uint8_t hlVal = 0;
-            int regIndex = opcode & 0x07;
-            bool isHL = (regIndex == 6);
+            uint8_t op = (opcode >> 6) & 0x03;
+            uint8_t bitNum = (opcode >> 3) & 0x07;
+            uint8_t reg = opcode & 0x07;
 
-            switch (regIndex) {
-                case 0: reg = &cpu.B; break;
-                case 1: reg = &cpu.C; break;
-                case 2: reg = &cpu.D; break;
-                case 3: reg = &cpu.E; break;
-                case 4: reg = &cpu.H; break;
-                case 5: reg = &cpu.L; break;
-                case 6: hlVal = memory::read(state, getHL(state)); break;
-                case 7: reg = &cpu.A; break;
+            int cycles = (reg == 6) ? 16 : 8;
+
+            uint8_t val;
+            if (reg == 6) {
+                val = memory::read(state, getHL(state));
+            } else {
+                val = *getRegister(state, reg);
             }
 
-            uint8_t val = isHL ? hlVal : *reg;
             uint8_t result = val;
-            int cycles = isHL ? 16 : 8;
 
-            uint8_t op = opcode >> 3;
-
-            if (opcode < 0x40) {
-                switch (op) {
-                    case 0:  // RLC
-                        {
-                            uint8_t bit7 = (val >> 7) & 1;
-                            result = (val << 1) | bit7;
-                            setFlag(state, FLAG_Z, result == 0);
-                            setFlag(state, FLAG_N, false);
-                            setFlag(state, FLAG_H, false);
-                            setFlag(state, FLAG_C, bit7);
-                        }
-                        break;
-
-                    case 1:  // RRC
-                        {
-                            uint8_t bit0 = val & 1;
-                            result = (val >> 1) | (bit0 << 7);
-                            setFlag(state, FLAG_Z, result == 0);
-                            setFlag(state, FLAG_N, false);
-                            setFlag(state, FLAG_H, false);
-                            setFlag(state, FLAG_C, bit0);
-                        }
-                        break;
-
-                    case 2:  // RL
-                        {
-                            uint8_t bit7 = (val >> 7) & 1;
-                            result = (val << 1) | (getFlag(state, FLAG_C) ? 1 : 0);
-                            setFlag(state, FLAG_Z, result == 0);
-                            setFlag(state, FLAG_N, false);
-                            setFlag(state, FLAG_H, false);
-                            setFlag(state, FLAG_C, bit7);
-                        }
-                        break;
-
-                    case 3:  // RR
-                        {
-                            uint8_t bit0 = val & 1;
-                            result = (val >> 1) | (getFlag(state, FLAG_C) ? 0x80 : 0);
-                            setFlag(state, FLAG_Z, result == 0);
-                            setFlag(state, FLAG_N, false);
-                            setFlag(state, FLAG_H, false);
-                            setFlag(state, FLAG_C, bit0);
-                        }
-                        break;
-
-                    case 4:  // SLA
-                        {
-                            uint8_t bit7 = (val >> 7) & 1;
-                            result = val << 1;
-                            setFlag(state, FLAG_Z, result == 0);
-                            setFlag(state, FLAG_N, false);
-                            setFlag(state, FLAG_H, false);
-                            setFlag(state, FLAG_C, bit7);
-                        }
-                        break;
-
-                    case 5:  // SRA
-                        {
-                            uint8_t bit0 = val & 1;
-                            uint8_t bit7 = val & 0x80;
-                            result = (val >> 1) | bit7;
-                            setFlag(state, FLAG_Z, result == 0);
-                            setFlag(state, FLAG_N, false);
-                            setFlag(state, FLAG_H, false);
-                            setFlag(state, FLAG_C, bit0);
-                        }
-                        break;
-
-                    case 6:  // SWAP
-                        result = ((val & 0x0F) << 4) | ((val & 0xF0) >> 4);
-                        setFlag(state, FLAG_Z, result == 0);
-                        setFlag(state, FLAG_N, false);
-                        setFlag(state, FLAG_H, false);
-                        setFlag(state, FLAG_C, false);
-                        break;
-
-                    case 7:  // SRL
-                        {
-                            uint8_t bit0 = val & 1;
-                            result = val >> 1;
-                            setFlag(state, FLAG_Z, result == 0);
-                            setFlag(state, FLAG_N, false);
-                            setFlag(state, FLAG_H, false);
-                            setFlag(state, FLAG_C, bit0);
-                        }
-                        break;
+            if (op == 0) {
+                switch (bitNum) {
+                    case 0: result = rlc(state, val); break;
+                    case 1: result = rrc(state, val); break;
+                    case 2: result = rl(state, val); break;
+                    case 3: result = rr(state, val); break;
+                    case 4: result = sla(state, val); break;
+                    case 5: result = sra(state, val); break;
+                    case 6: result = swap(state, val); break;
+                    case 7: result = srl(state, val); break;
                 }
 
-                if (isHL) {
+                if (reg == 6) {
                     memory::write(state, getHL(state), result);
                 } else {
-                    *reg = result;
+                    *getRegister(state, reg) = result;
                 }
             }
-            else if (opcode < 0x80) {
-                // BIT
-                int bit = (opcode >> 3) & 0x07;
-                setFlag(state, FLAG_Z, (val & (1 << bit)) == 0);
-                setFlag(state, FLAG_N, false);
-                setFlag(state, FLAG_H, true);
-                cycles = isHL ? 12 : 8;
+            else if (op == 1) {
+                bit(state, bitNum, val);
+                cycles = (reg == 6) ? 12 : 8;
             }
-            else if (opcode < 0xC0) {
-                // RES
-                int bit = (opcode >> 3) & 0x07;
-                result = val & ~(1 << bit);
-
-                if (isHL) {
+            else if (op == 2) {
+                result = res(bitNum, val);
+                if (reg == 6) {
                     memory::write(state, getHL(state), result);
                 } else {
-                    *reg = result;
+                    *getRegister(state, reg) = result;
                 }
             }
             else {
-                // SET
-                int bit = (opcode >> 3) & 0x07;
-                result = val | (1 << bit);
-
-                if (isHL) {
+                result = set(bitNum, val);
+                if (reg == 6) {
                     memory::write(state, getHL(state), result);
                 } else {
-                    *reg = result;
+                    *getRegister(state, reg) = result;
                 }
             }
 
             return cycles;
         }
-
-        // ═══════════════════════════════════════════════════════════════════
-        // MAIN STEP FUNCTION
-        // ═══════════════════════════════════════════════════════════════════
 
         int step(GBState& state) {
             auto& cpu = state.cpu;
@@ -803,7 +790,1252 @@ namespace gb {
                 case 0x4E: cpu.C = memory::read(state, getHL(state)); cycles = 8; break;
                 case 0x4F: cpu.C = cpu.A; cycles = 4; break;
 
-                
+                case 0x50: cpu.D = cpu.B; cycles = 4; break;
+                case 0x51: cpu.D = cpu.C; cycles = 4; break;
+                case 0x52: cpu.D = cpu.D; cycles = 4; break;
+                case 0x53: cpu.D = cpu.E; cycles = 4; break;
+                case 0x54: cpu.D = cpu.H; cycles = 4; break;
+                case 0x55: cpu.D = cpu.L; cycles = 4; break;
+                case 0x56: cpu.D = memory::read(state, getHL(state)); cycles = 8; break;
+                case 0x57: cpu.D = cpu.A; cycles = 4; break;
+
+                case 0x58: cpu.E = cpu.B; cycles = 4; break;
+                case 0x59: cpu.E = cpu.C; cycles = 4; break;
+                case 0x5A: cpu.E = cpu.D; cycles = 4; break;
+                case 0x5B: cpu.E = cpu.E; cycles = 4; break;
+                case 0x5C: cpu.E = cpu.H; cycles = 4; break;
+                case 0x5D: cpu.E = cpu.L; cycles = 4; break;
+                case 0x5E: cpu.E = memory::read(state, getHL(state)); cycles = 8; break;
+                case 0x5F: cpu.E = cpu.A; cycles = 4; break;
+
+                case 0x60: cpu.H = cpu.B; cycles = 4; break;
+                case 0x61: cpu.H = cpu.C; cycles = 4; break;
+                case 0x62: cpu.H = cpu.D; cycles = 4; break;
+                case 0x63: cpu.H = cpu.E; cycles = 4; break;
+                case 0x64: cpu.H = cpu.H; cycles = 4; break;
+                case 0x65: cpu.H = cpu.L; cycles = 4; break;
+                case 0x66: cpu.H = memory::read(state, getHL(state)); cycles = 8; break;
+                case 0x67: cpu.H = cpu.A; cycles = 4; break;
+
+                case 0x68: cpu.L = cpu.B; cycles = 4; break;
+                case 0x69: cpu.L = cpu.C; cycles = 4; break;
+                case 0x6A: cpu.L = cpu.D; cycles = 4; break;
+                case 0x6B: cpu.L = cpu.E; cycles = 4; break;
+                case 0x6C: cpu.L = cpu.H; cycles = 4; break;
+                case 0x6D: cpu.L = cpu.L; cycles = 4; break;
+                case 0x6E: cpu.L = memory::read(state, getHL(state)); cycles = 8; break;
+                case 0x6F: cpu.L = cpu.A; cycles = 4; break;
+
+                case 0x70: memory::write(state, getHL(state), cpu.B); cycles = 8; break;
+                case 0x71: memory::write(state, getHL(state), cpu.C); cycles = 8; break;
+                case 0x72: memory::write(state, getHL(state), cpu.D); cycles = 8; break;
+                case 0x73: memory::write(state, getHL(state), cpu.E); cycles = 8; break;
+                case 0x74: memory::write(state, getHL(state), cpu.H); cycles = 8; break;
+                case 0x75: memory::write(state, getHL(state), cpu.L); cycles = 8; break;
+                case 0x76: cpu.halted = true; cycles = 4; break;  // HALT
+                case 0x77: memory::write(state, getHL(state), cpu.A); cycles = 8; break;
+
+                case 0x78: cpu.A = cpu.B; cycles = 4; break;
+                case 0x79: cpu.A = cpu.C; cycles = 4; break;
+                case 0x7A: cpu.A = cpu.D; cycles = 4; break;
+                case 0x7B: cpu.A = cpu.E; cycles = 4; break;
+                case 0x7C: cpu.A = cpu.H; cycles = 4; break;
+                case 0x7D: cpu.A = cpu.L; cycles = 4; break;
+                case 0x7E: cpu.A = memory::read(state, getHL(state)); cycles = 8; break;
+                case 0x7F: cpu.A = cpu.A; cycles = 4; break;
+
+                // ═══════════════════════════════════════════════════════════
+                // 0x80 - 0x87: ADD A, r
+                // ═══════════════════════════════════════════════════════════
+
+                case 0x80:  // ADD A, B
+                    {
+                        uint16_t result = cpu.A + cpu.B;
+                        setFlag(state, FLAG_Z, (result & 0xFF) == 0);
+                        setFlag(state, FLAG_N, false);
+                        setFlag(state, FLAG_H, ((cpu.A & 0x0F) + (cpu.B & 0x0F)) > 0x0F);
+                        setFlag(state, FLAG_C, result > 0xFF);
+                        cpu.A = result & 0xFF;
+                    }
+                    cycles = 4;
+                    break;
+
+                case 0x81:  // ADD A, C
+                    {
+                        uint16_t result = cpu.A + cpu.C;
+                        setFlag(state, FLAG_Z, (result & 0xFF) == 0);
+                        setFlag(state, FLAG_N, false);
+                        setFlag(state, FLAG_H, ((cpu.A & 0x0F) + (cpu.C & 0x0F)) > 0x0F);
+                        setFlag(state, FLAG_C, result > 0xFF);
+                        cpu.A = result & 0xFF;
+                    }
+                    cycles = 4;
+                    break;
+
+                case 0x82:  // ADD A, D
+                    {
+                        uint16_t result = cpu.A + cpu.D;
+                        setFlag(state, FLAG_Z, (result & 0xFF) == 0);
+                        setFlag(state, FLAG_N, false);
+                        setFlag(state, FLAG_H, ((cpu.A & 0x0F) + (cpu.D & 0x0F)) > 0x0F);
+                        setFlag(state, FLAG_C, result > 0xFF);
+                        cpu.A = result & 0xFF;
+                    }
+                    cycles = 4;
+                    break;
+
+                case 0x83:  // ADD A, E
+                    {
+                        uint16_t result = cpu.A + cpu.E;
+                        setFlag(state, FLAG_Z, (result & 0xFF) == 0);
+                        setFlag(state, FLAG_N, false);
+                        setFlag(state, FLAG_H, ((cpu.A & 0x0F) + (cpu.E & 0x0F)) > 0x0F);
+                        setFlag(state, FLAG_C, result > 0xFF);
+                        cpu.A = result & 0xFF;
+                    }
+                    cycles = 4;
+                    break;
+
+                case 0x84:  // ADD A, H
+                    {
+                        uint16_t result = cpu.A + cpu.H;
+                        setFlag(state, FLAG_Z, (result & 0xFF) == 0);
+                        setFlag(state, FLAG_N, false);
+                        setFlag(state, FLAG_H, ((cpu.A & 0x0F) + (cpu.H & 0x0F)) > 0x0F);
+                        setFlag(state, FLAG_C, result > 0xFF);
+                        cpu.A = result & 0xFF;
+                    }
+                    cycles = 4;
+                    break;
+
+                case 0x85:  // ADD A, L
+                    {
+                        uint16_t result = cpu.A + cpu.L;
+                        setFlag(state, FLAG_Z, (result & 0xFF) == 0);
+                        setFlag(state, FLAG_N, false);
+                        setFlag(state, FLAG_H, ((cpu.A & 0x0F) + (cpu.L & 0x0F)) > 0x0F);
+                        setFlag(state, FLAG_C, result > 0xFF);
+                        cpu.A = result & 0xFF;
+                    }
+                    cycles = 4;
+                    break;
+
+                case 0x86:  // ADD A, (HL)
+                    {
+                        uint8_t val = memory::read(state, getHL(state));
+                        uint16_t result = cpu.A + val;
+                        setFlag(state, FLAG_Z, (result & 0xFF) == 0);
+                        setFlag(state, FLAG_N, false);
+                        setFlag(state, FLAG_H, ((cpu.A & 0x0F) + (val & 0x0F)) > 0x0F);
+                        setFlag(state, FLAG_C, result > 0xFF);
+                        cpu.A = result & 0xFF;
+                    }
+                    cycles = 8;
+                    break;
+
+                case 0x87:  // ADD A, A
+                    {
+                        uint16_t result = cpu.A + cpu.A;
+                        setFlag(state, FLAG_Z, (result & 0xFF) == 0);
+                        setFlag(state, FLAG_N, false);
+                        setFlag(state, FLAG_H, ((cpu.A & 0x0F) + (cpu.A & 0x0F)) > 0x0F);
+                        setFlag(state, FLAG_C, result > 0xFF);
+                        cpu.A = result & 0xFF;
+                    }
+                    cycles = 4;
+                    break;
+
+                case 0x88:  // ADC A, B
+                    {
+                        uint8_t carry = getFlag(state, FLAG_C) ? 1 : 0;
+                        uint16_t result = cpu.A + cpu.B + carry;
+                        setFlag(state, FLAG_Z, (result & 0xFF) == 0);
+                        setFlag(state, FLAG_N, false);
+                        setFlag(state, FLAG_H, ((cpu.A & 0x0F) + (cpu.B & 0x0F) + carry) > 0x0F);
+                        setFlag(state, FLAG_C, result > 0xFF);
+                        cpu.A = result & 0xFF;
+                    }
+                    cycles = 4;
+                    break;
+
+                case 0x89:  // ADC A, C
+                    {
+                        uint8_t carry = getFlag(state, FLAG_C) ? 1 : 0;
+                        uint16_t result = cpu.A + cpu.C + carry;
+                        setFlag(state, FLAG_Z, (result & 0xFF) == 0);
+                        setFlag(state, FLAG_N, false);
+                        setFlag(state, FLAG_H, ((cpu.A & 0x0F) + (cpu.C & 0x0F) + carry) > 0x0F);
+                        setFlag(state, FLAG_C, result > 0xFF);
+                        cpu.A = result & 0xFF;
+                    }
+                    cycles = 4;
+                    break;
+
+                case 0x8A:  // ADC A, D
+                    {
+                        uint8_t carry = getFlag(state, FLAG_C) ? 1 : 0;
+                        uint16_t result = cpu.A + cpu.D + carry;
+                        setFlag(state, FLAG_Z, (result & 0xFF) == 0);
+                        setFlag(state, FLAG_N, false);
+                        setFlag(state, FLAG_H, ((cpu.A & 0x0F) + (cpu.D & 0x0F) + carry) > 0x0F);
+                        setFlag(state, FLAG_C, result > 0xFF);
+                        cpu.A = result & 0xFF;
+                    }
+                    cycles = 4;
+                    break;
+
+                case 0x8B:  // ADC A, E
+                    {
+                        uint8_t carry = getFlag(state, FLAG_C) ? 1 : 0;
+                        uint16_t result = cpu.A + cpu.E + carry;
+                        setFlag(state, FLAG_Z, (result & 0xFF) == 0);
+                        setFlag(state, FLAG_N, false);
+                        setFlag(state, FLAG_H, ((cpu.A & 0x0F) + (cpu.E & 0x0F) + carry) > 0x0F);
+                        setFlag(state, FLAG_C, result > 0xFF);
+                        cpu.A = result & 0xFF;
+                    }
+                    cycles = 4;
+                    break;
+
+                case 0x8C:  // ADC A, H
+                    {
+                        uint8_t carry = getFlag(state, FLAG_C) ? 1 : 0;
+                        uint16_t result = cpu.A + cpu.H + carry;
+                        setFlag(state, FLAG_Z, (result & 0xFF) == 0);
+                        setFlag(state, FLAG_N, false);
+                        setFlag(state, FLAG_H, ((cpu.A & 0x0F) + (cpu.H & 0x0F) + carry) > 0x0F);
+                        setFlag(state, FLAG_C, result > 0xFF);
+                        cpu.A = result & 0xFF;
+                    }
+                    cycles = 4;
+                    break;
+
+                case 0x8D:  // ADC A, L
+                    {
+                        uint8_t carry = getFlag(state, FLAG_C) ? 1 : 0;
+                        uint16_t result = cpu.A + cpu.L + carry;
+                        setFlag(state, FLAG_Z, (result & 0xFF) == 0);
+                        setFlag(state, FLAG_N, false);
+                        setFlag(state, FLAG_H, ((cpu.A & 0x0F) + (cpu.L & 0x0F) + carry) > 0x0F);
+                        setFlag(state, FLAG_C, result > 0xFF);
+                        cpu.A = result & 0xFF;
+                    }
+                    cycles = 4;
+                    break;
+
+                case 0x8E:  // ADC A, (HL)
+                    {
+                        uint8_t val = memory::read(state, getHL(state));
+                        uint8_t carry = getFlag(state, FLAG_C) ? 1 : 0;
+                        uint16_t result = cpu.A + val + carry;
+                        setFlag(state, FLAG_Z, (result & 0xFF) == 0);
+                        setFlag(state, FLAG_N, false);
+                        setFlag(state, FLAG_H, ((cpu.A & 0x0F) + (val & 0x0F) + carry) > 0x0F);
+                        setFlag(state, FLAG_C, result > 0xFF);
+                        cpu.A = result & 0xFF;
+                    }
+                    cycles = 8;
+                    break;
+
+                case 0x8F:  // ADC A, A
+                    {
+                        uint8_t carry = getFlag(state, FLAG_C) ? 1 : 0;
+                        uint16_t result = cpu.A + cpu.A + carry;
+                        setFlag(state, FLAG_Z, (result & 0xFF) == 0);
+                        setFlag(state, FLAG_N, false);
+                        setFlag(state, FLAG_H, ((cpu.A & 0x0F) + (cpu.A & 0x0F) + carry) > 0x0F);
+                        setFlag(state, FLAG_C, result > 0xFF);
+                        cpu.A = result & 0xFF;
+                    }
+                    cycles = 4;
+                    break;
+
+                // ═══════════════════════════════════════════════════════════
+                // 0x90 - 0x97: SUB A, r
+                // ═══════════════════════════════════════════════════════════
+
+                case 0x90:  // SUB B
+                    {
+                        int result = cpu.A - cpu.B;
+                        setFlag(state, FLAG_Z, (result & 0xFF) == 0);
+                        setFlag(state, FLAG_N, true);
+                        setFlag(state, FLAG_H, (cpu.A & 0x0F) < (cpu.B & 0x0F));
+                        setFlag(state, FLAG_C, result < 0);
+                        cpu.A = result & 0xFF;
+                    }
+                    cycles = 4;
+                    break;
+
+                case 0x91:  // SUB C
+                    {
+                        int result = cpu.A - cpu.C;
+                        setFlag(state, FLAG_Z, (result & 0xFF) == 0);
+                        setFlag(state, FLAG_N, true);
+                        setFlag(state, FLAG_H, (cpu.A & 0x0F) < (cpu.C & 0x0F));
+                        setFlag(state, FLAG_C, result < 0);
+                        cpu.A = result & 0xFF;
+                    }
+                    cycles = 4;
+                    break;
+
+                case 0x92:  // SUB D
+                    {
+                        int result = cpu.A - cpu.D;
+                        setFlag(state, FLAG_Z, (result & 0xFF) == 0);
+                        setFlag(state, FLAG_N, true);
+                        setFlag(state, FLAG_H, (cpu.A & 0x0F) < (cpu.D & 0x0F));
+                        setFlag(state, FLAG_C, result < 0);
+                        cpu.A = result & 0xFF;
+                    }
+                    cycles = 4;
+                    break;
+
+                case 0x93:  // SUB E
+                    {
+                        int result = cpu.A - cpu.E;
+                        setFlag(state, FLAG_Z, (result & 0xFF) == 0);
+                        setFlag(state, FLAG_N, true);
+                        setFlag(state, FLAG_H, (cpu.A & 0x0F) < (cpu.E & 0x0F));
+                        setFlag(state, FLAG_C, result < 0);
+                        cpu.A = result & 0xFF;
+                    }
+                    cycles = 4;
+                    break;
+
+                case 0x94:  // SUB H
+                    {
+                        int result = cpu.A - cpu.H;
+                        setFlag(state, FLAG_Z, (result & 0xFF) == 0);
+                        setFlag(state, FLAG_N, true);
+                        setFlag(state, FLAG_H, (cpu.A & 0x0F) < (cpu.H & 0x0F));
+                        setFlag(state, FLAG_C, result < 0);
+                        cpu.A = result & 0xFF;
+                    }
+                    cycles = 4;
+                    break;
+
+                case 0x95:  // SUB L
+                    {
+                        int result = cpu.A - cpu.L;
+                        setFlag(state, FLAG_Z, (result & 0xFF) == 0);
+                        setFlag(state, FLAG_N, true);
+                        setFlag(state, FLAG_H, (cpu.A & 0x0F) < (cpu.L & 0x0F));
+                        setFlag(state, FLAG_C, result < 0);
+                        cpu.A = result & 0xFF;
+                    }
+                    cycles = 4;
+                    break;
+
+                case 0x96:  // SUB (HL)
+                    {
+                        uint8_t val = memory::read(state, getHL(state));
+                        int result = cpu.A - val;
+                        setFlag(state, FLAG_Z, (result & 0xFF) == 0);
+                        setFlag(state, FLAG_N, true);
+                        setFlag(state, FLAG_H, (cpu.A & 0x0F) < (val & 0x0F));
+                        setFlag(state, FLAG_C, result < 0);
+                        cpu.A = result & 0xFF;
+                    }
+                    cycles = 8;
+                    break;
+
+                case 0x97:  // SUB A
+                    cpu.A = 0;
+                    setFlag(state, FLAG_Z, true);
+                    setFlag(state, FLAG_N, true);
+                    setFlag(state, FLAG_H, false);
+                    setFlag(state, FLAG_C, false);
+                    cycles = 4;
+                    break;
+
+                // ═══════════════════════════════════════════════════════════
+                // 0x98 - 0x9F: SBC A, r
+                // ═══════════════════════════════════════════════════════════
+
+                case 0x98:  // SBC A, B
+                    {
+                        uint8_t carry = getFlag(state, FLAG_C) ? 1 : 0;
+                        int result = cpu.A - cpu.B - carry;
+                        setFlag(state, FLAG_Z, (result & 0xFF) == 0);
+                        setFlag(state, FLAG_N, true);
+                        setFlag(state, FLAG_H, ((cpu.A & 0x0F) - (cpu.B & 0x0F) - carry) < 0);
+                        setFlag(state, FLAG_C, result < 0);
+                        cpu.A = result & 0xFF;
+                    }
+                    cycles = 4;
+                    break;
+
+                case 0x99:  // SBC A, C
+                    {
+                        uint8_t carry = getFlag(state, FLAG_C) ? 1 : 0;
+                        int result = cpu.A - cpu.C - carry;
+                        setFlag(state, FLAG_Z, (result & 0xFF) == 0);
+                        setFlag(state, FLAG_N, true);
+                        setFlag(state, FLAG_H, ((cpu.A & 0x0F) - (cpu.C & 0x0F) - carry) < 0);
+                        setFlag(state, FLAG_C, result < 0);
+                        cpu.A = result & 0xFF;
+                    }
+                    cycles = 4;
+                    break;
+
+                case 0x9A:  // SBC A, D
+                    {
+                        uint8_t carry = getFlag(state, FLAG_C) ? 1 : 0;
+                        int result = cpu.A - cpu.D - carry;
+                        setFlag(state, FLAG_Z, (result & 0xFF) == 0);
+                        setFlag(state, FLAG_N, true);
+                        setFlag(state, FLAG_H, ((cpu.A & 0x0F) - (cpu.D & 0x0F) - carry) < 0);
+                        setFlag(state, FLAG_C, result < 0);
+                        cpu.A = result & 0xFF;
+                    }
+                    cycles = 4;
+                    break;
+
+                case 0x9B:  // SBC A, E
+                    {
+                        uint8_t carry = getFlag(state, FLAG_C) ? 1 : 0;
+                        int result = cpu.A - cpu.E - carry;
+                        setFlag(state, FLAG_Z, (result & 0xFF) == 0);
+                        setFlag(state, FLAG_N, true);
+                        setFlag(state, FLAG_H, ((cpu.A & 0x0F) - (cpu.E & 0x0F) - carry) < 0);
+                        setFlag(state, FLAG_C, result < 0);
+                        cpu.A = result & 0xFF;
+                    }
+                    cycles = 4;
+                    break;
+
+                case 0x9C:  // SBC A, H
+                    {
+                        uint8_t carry = getFlag(state, FLAG_C) ? 1 : 0;
+                        int result = cpu.A - cpu.H - carry;
+                        setFlag(state, FLAG_Z, (result & 0xFF) == 0);
+                        setFlag(state, FLAG_N, true);
+                        setFlag(state, FLAG_H, ((cpu.A & 0x0F) - (cpu.H & 0x0F) - carry) < 0);
+                        setFlag(state, FLAG_C, result < 0);
+                        cpu.A = result & 0xFF;
+                    }
+                    cycles = 4;
+                    break;
+
+                case 0x9D:  // SBC A, L
+                    {
+                        uint8_t carry = getFlag(state, FLAG_C) ? 1 : 0;
+                        int result = cpu.A - cpu.L - carry;
+                        setFlag(state, FLAG_Z, (result & 0xFF) == 0);
+                        setFlag(state, FLAG_N, true);
+                        setFlag(state, FLAG_H, ((cpu.A & 0x0F) - (cpu.L & 0x0F) - carry) < 0);
+                        setFlag(state, FLAG_C, result < 0);
+                        cpu.A = result & 0xFF;
+                    }
+                    cycles = 4;
+                    break;
+
+                case 0x9E:  // SBC A, (HL)
+                    {
+                        uint8_t val = memory::read(state, getHL(state));
+                        uint8_t carry = getFlag(state, FLAG_C) ? 1 : 0;
+                        int result = cpu.A - val - carry;
+                        setFlag(state, FLAG_Z, (result & 0xFF) == 0);
+                        setFlag(state, FLAG_N, true);
+                        setFlag(state, FLAG_H, ((cpu.A & 0x0F) - (val & 0x0F) - carry) < 0);
+                        setFlag(state, FLAG_C, result < 0);
+                        cpu.A = result & 0xFF;
+                    }
+                    cycles = 8;
+                    break;
+
+                case 0x9F:  // SBC A, A
+                    {
+                        uint8_t carry = getFlag(state, FLAG_C) ? 1 : 0;
+                        int result = cpu.A - cpu.A - carry;
+                        setFlag(state, FLAG_Z, (result & 0xFF) == 0);
+                        setFlag(state, FLAG_N, true);
+                        setFlag(state, FLAG_H, carry);
+                        setFlag(state, FLAG_C, carry);
+                        cpu.A = result & 0xFF;
+                    }
+                    cycles = 4;
+                    break;
+
+                case 0xA0:  // AND B
+                    cpu.A &= cpu.B;
+                    setFlag(state, FLAG_Z, cpu.A == 0);
+                    setFlag(state, FLAG_N, false);
+                    setFlag(state, FLAG_H, true);
+                    setFlag(state, FLAG_C, false);
+                    cycles = 4;
+                    break;
+
+                case 0xA1:  // AND C
+                    cpu.A &= cpu.C;
+                    setFlag(state, FLAG_Z, cpu.A == 0);
+                    setFlag(state, FLAG_N, false);
+                    setFlag(state, FLAG_H, true);
+                    setFlag(state, FLAG_C, false);
+                    cycles = 4;
+                    break;
+
+                case 0xA2:  // AND D
+                    cpu.A &= cpu.D;
+                    setFlag(state, FLAG_Z, cpu.A == 0);
+                    setFlag(state, FLAG_N, false);
+                    setFlag(state, FLAG_H, true);
+                    setFlag(state, FLAG_C, false);
+                    cycles = 4;
+                    break;
+
+                case 0xA3:  // AND E
+                    cpu.A &= cpu.E;
+                    setFlag(state, FLAG_Z, cpu.A == 0);
+                    setFlag(state, FLAG_N, false);
+                    setFlag(state, FLAG_H, true);
+                    setFlag(state, FLAG_C, false);
+                    cycles = 4;
+                    break;
+
+                case 0xA4:  // AND H
+                    cpu.A &= cpu.H;
+                    setFlag(state, FLAG_Z, cpu.A == 0);
+                    setFlag(state, FLAG_N, false);
+                    setFlag(state, FLAG_H, true);
+                    setFlag(state, FLAG_C, false);
+                    cycles = 4;
+                    break;
+
+                case 0xA5:  // AND L
+                    cpu.A &= cpu.L;
+                    setFlag(state, FLAG_Z, cpu.A == 0);
+                    setFlag(state, FLAG_N, false);
+                    setFlag(state, FLAG_H, true);
+                    setFlag(state, FLAG_C, false);
+                    cycles = 4;
+                    break;
+
+                case 0xA6:  // AND (HL)
+                    cpu.A &= memory::read(state, getHL(state));
+                    setFlag(state, FLAG_Z, cpu.A == 0);
+                    setFlag(state, FLAG_N, false);
+                    setFlag(state, FLAG_H, true);
+                    setFlag(state, FLAG_C, false);
+                    cycles = 8;
+                    break;
+
+                case 0xA7:  // AND A
+                    setFlag(state, FLAG_Z, cpu.A == 0);
+                    setFlag(state, FLAG_N, false);
+                    setFlag(state, FLAG_H, true);
+                    setFlag(state, FLAG_C, false);
+                    cycles = 4;
+                    break;
+
+                case 0xA8:  // XOR B
+                    cpu.A ^= cpu.B;
+                    setFlag(state, FLAG_Z, cpu.A == 0);
+                    setFlag(state, FLAG_N, false);
+                    setFlag(state, FLAG_H, false);
+                    setFlag(state, FLAG_C, false);
+                    cycles = 4;
+                    break;
+
+                case 0xA9:  // XOR C
+                    cpu.A ^= cpu.C;
+                    setFlag(state, FLAG_Z, cpu.A == 0);
+                    setFlag(state, FLAG_N, false);
+                    setFlag(state, FLAG_H, false);
+                    setFlag(state, FLAG_C, false);
+                    cycles = 4;
+                    break;
+
+                case 0xAA:  // XOR D
+                    cpu.A ^= cpu.D;
+                    setFlag(state, FLAG_Z, cpu.A == 0);
+                    setFlag(state, FLAG_N, false);
+                    setFlag(state, FLAG_H, false);
+                    setFlag(state, FLAG_C, false);
+                    cycles = 4;
+                    break;
+
+                case 0xAB:  // XOR E
+                    cpu.A ^= cpu.E;
+                    setFlag(state, FLAG_Z, cpu.A == 0);
+                    setFlag(state, FLAG_N, false);
+                    setFlag(state, FLAG_H, false);
+                    setFlag(state, FLAG_C, false);
+                    cycles = 4;
+                    break;
+
+                case 0xAC:  // XOR H
+                    cpu.A ^= cpu.H;
+                    setFlag(state, FLAG_Z, cpu.A == 0);
+                    setFlag(state, FLAG_N, false);
+                    setFlag(state, FLAG_H, false);
+                    setFlag(state, FLAG_C, false);
+                    cycles = 4;
+                    break;
+
+                case 0xAD:  // XOR L
+                    cpu.A ^= cpu.L;
+                    setFlag(state, FLAG_Z, cpu.A == 0);
+                    setFlag(state, FLAG_N, false);
+                    setFlag(state, FLAG_H, false);
+                    setFlag(state, FLAG_C, false);
+                    cycles = 4;
+                    break;
+
+                case 0xAE:  // XOR (HL)
+                    cpu.A ^= memory::read(state, getHL(state));
+                    setFlag(state, FLAG_Z, cpu.A == 0);
+                    setFlag(state, FLAG_N, false);
+                    setFlag(state, FLAG_H, false);
+                    setFlag(state, FLAG_C, false);
+                    cycles = 8;
+                    break;
+
+                case 0xAF:  // XOR A
+                    cpu.A = 0;
+                    setFlag(state, FLAG_Z, true);
+                    setFlag(state, FLAG_N, false);
+                    setFlag(state, FLAG_H, false);
+                    setFlag(state, FLAG_C, false);
+                    cycles = 4;
+                    break;
+
+                case 0xB0:  // OR B
+                    cpu.A |= cpu.B;
+                    setFlag(state, FLAG_Z, cpu.A == 0);
+                    setFlag(state, FLAG_N, false);
+                    setFlag(state, FLAG_H, false);
+                    setFlag(state, FLAG_C, false);
+                    cycles = 4;
+                    break;
+
+                case 0xB1:  // OR C
+                    cpu.A |= cpu.C;
+                    setFlag(state, FLAG_Z, cpu.A == 0);
+                    setFlag(state, FLAG_N, false);
+                    setFlag(state, FLAG_H, false);
+                    setFlag(state, FLAG_C, false);
+                    cycles = 4;
+                    break;
+
+                case 0xB2:  // OR D
+                    cpu.A |= cpu.D;
+                    setFlag(state, FLAG_Z, cpu.A == 0);
+                    setFlag(state, FLAG_N, false);
+                    setFlag(state, FLAG_H, false);
+                    setFlag(state, FLAG_C, false);
+                    cycles = 4;
+                    break;
+
+                case 0xB3:  // OR E
+                    cpu.A |= cpu.E;
+                    setFlag(state, FLAG_Z, cpu.A == 0);
+                    setFlag(state, FLAG_N, false);
+                    setFlag(state, FLAG_H, false);
+                    setFlag(state, FLAG_C, false);
+                    cycles = 4;
+                    break;
+
+                case 0xB4:  // OR H
+                    cpu.A |= cpu.H;
+                    setFlag(state, FLAG_Z, cpu.A == 0);
+                    setFlag(state, FLAG_N, false);
+                    setFlag(state, FLAG_H, false);
+                    setFlag(state, FLAG_C, false);
+                    cycles = 4;
+                    break;
+
+                case 0xB5:  // OR L
+                    cpu.A |= cpu.L;
+                    setFlag(state, FLAG_Z, cpu.A == 0);
+                    setFlag(state, FLAG_N, false);
+                    setFlag(state, FLAG_H, false);
+                    setFlag(state, FLAG_C, false);
+                    cycles = 4;
+                    break;
+
+                case 0xB6:  // OR (HL)
+                    cpu.A |= memory::read(state, getHL(state));
+                    setFlag(state, FLAG_Z, cpu.A == 0);
+                    setFlag(state, FLAG_N, false);
+                    setFlag(state, FLAG_H, false);
+                    setFlag(state, FLAG_C, false);
+                    cycles = 8;
+                    break;
+
+                case 0xB7:  // OR A
+                    setFlag(state, FLAG_Z, cpu.A == 0);
+                    setFlag(state, FLAG_N, false);
+                    setFlag(state, FLAG_H, false);
+                    setFlag(state, FLAG_C, false);
+                    cycles = 4;
+                    break;
+
+                case 0xB8:  // CP B
+                    setFlag(state, FLAG_Z, cpu.A == cpu.B);
+                    setFlag(state, FLAG_N, true);
+                    setFlag(state, FLAG_H, (cpu.A & 0x0F) < (cpu.B & 0x0F));
+                    setFlag(state, FLAG_C, cpu.A < cpu.B);
+                    cycles = 4;
+                    break;
+
+                case 0xB9:  // CP C
+                    setFlag(state, FLAG_Z, cpu.A == cpu.C);
+                    setFlag(state, FLAG_N, true);
+                    setFlag(state, FLAG_H, (cpu.A & 0x0F) < (cpu.C & 0x0F));
+                    setFlag(state, FLAG_C, cpu.A < cpu.C);
+                    cycles = 4;
+                    break;
+
+                case 0xBA:  // CP D
+                    setFlag(state, FLAG_Z, cpu.A == cpu.D);
+                    setFlag(state, FLAG_N, true);
+                    setFlag(state, FLAG_H, (cpu.A & 0x0F) < (cpu.D & 0x0F));
+                    setFlag(state, FLAG_C, cpu.A < cpu.D);
+                    cycles = 4;
+                    break;
+
+                case 0xBB:  // CP E
+                    setFlag(state, FLAG_Z, cpu.A == cpu.E);
+                    setFlag(state, FLAG_N, true);
+                    setFlag(state, FLAG_H, (cpu.A & 0x0F) < (cpu.E & 0x0F));
+                    setFlag(state, FLAG_C, cpu.A < cpu.E);
+                    cycles = 4;
+                    break;
+
+                case 0xBC:  // CP H
+                    setFlag(state, FLAG_Z, cpu.A == cpu.H);
+                    setFlag(state, FLAG_N, true);
+                    setFlag(state, FLAG_H, (cpu.A & 0x0F) < (cpu.H & 0x0F));
+                    setFlag(state, FLAG_C, cpu.A < cpu.H);
+                    cycles = 4;
+                    break;
+
+                case 0xBD:  // CP L
+                    setFlag(state, FLAG_Z, cpu.A == cpu.L);
+                    setFlag(state, FLAG_N, true);
+                    setFlag(state, FLAG_H, (cpu.A & 0x0F) < (cpu.L & 0x0F));
+                    setFlag(state, FLAG_C, cpu.A < cpu.L);
+                    cycles = 4;
+                    break;
+
+                case 0xBE:  // CP (HL)
+                    {
+                        uint8_t val = memory::read(state, getHL(state));
+                        setFlag(state, FLAG_Z, cpu.A == val);
+                        setFlag(state, FLAG_N, true);
+                        setFlag(state, FLAG_H, (cpu.A & 0x0F) < (val & 0x0F));
+                        setFlag(state, FLAG_C, cpu.A < val);
+                    }
+                    cycles = 8;
+                    break;
+
+                case 0xBF:  // CP A
+                    setFlag(state, FLAG_Z, true);
+                    setFlag(state, FLAG_N, true);
+                    setFlag(state, FLAG_H, false);
+                    setFlag(state, FLAG_C, false);
+                    cycles = 4;
+                    break;
+
+                // ═══════════════════════════════════════════════════════════
+                // 0xC0 - 0xCF
+                // ═══════════════════════════════════════════════════════════
+
+                case 0xC0:  // RET NZ
+                    if (!getFlag(state, FLAG_Z)) {
+                        cpu.PC = memory::read(state, cpu.SP) | (memory::read(state, cpu.SP + 1) << 8);
+                        cpu.SP += 2;
+                        cycles = 20;
+                    } else {
+                        cycles = 8;
+                    }
+                    break;
+
+                case 0xC1:  // POP BC
+                    cpu.C = memory::read(state, cpu.SP);
+                    cpu.B = memory::read(state, cpu.SP + 1);
+                    cpu.SP += 2;
+                    cycles = 12;
+                    break;
+
+                case 0xC2:  // JP NZ, nn
+                    {
+                        uint16_t addr = fetchWord(state);
+                        if (!getFlag(state, FLAG_Z)) {
+                            cpu.PC = addr;
+                            cycles = 16;
+                        } else {
+                            cycles = 12;
+                        }
+                    }
+                    break;
+
+                case 0xC3:  // JP nn
+                    cpu.PC = fetchWord(state);
+                    cycles = 16;
+                    break;
+
+                case 0xC4:  // CALL NZ, nn
+                    {
+                        uint16_t addr = fetchWord(state);
+                        if (!getFlag(state, FLAG_Z)) {
+                            cpu.SP -= 2;
+                            memory::write(state, cpu.SP, cpu.PC & 0xFF);
+                            memory::write(state, cpu.SP + 1, cpu.PC >> 8);
+                            cpu.PC = addr;
+                            cycles = 24;
+                        } else {
+                            cycles = 12;
+                        }
+                    }
+                    break;
+
+                case 0xC5:  // PUSH BC
+                    cpu.SP -= 2;
+                    memory::write(state, cpu.SP, cpu.C);
+                    memory::write(state, cpu.SP + 1, cpu.B);
+                    cycles = 16;
+                    break;
+
+                case 0xC6:  // ADD A, n
+                    {
+                        uint8_t val = fetchByte(state);
+                        uint16_t result = cpu.A + val;
+                        setFlag(state, FLAG_Z, (result & 0xFF) == 0);
+                        setFlag(state, FLAG_N, false);
+                        setFlag(state, FLAG_H, ((cpu.A & 0x0F) + (val & 0x0F)) > 0x0F);
+                        setFlag(state, FLAG_C, result > 0xFF);
+                        cpu.A = result & 0xFF;
+                    }
+                    cycles = 8;
+                    break;
+
+                case 0xC7:  // RST 00H
+                    cpu.SP -= 2;
+                    memory::write(state, cpu.SP, cpu.PC & 0xFF);
+                    memory::write(state, cpu.SP + 1, cpu.PC >> 8);
+                    cpu.PC = 0x0000;
+                    cycles = 16;
+                    break;
+
+                case 0xC8:  // RET Z
+                    if (getFlag(state, FLAG_Z)) {
+                        cpu.PC = memory::read(state, cpu.SP) | (memory::read(state, cpu.SP + 1) << 8);
+                        cpu.SP += 2;
+                        cycles = 20;
+                    } else {
+                        cycles = 8;
+                    }
+                    break;
+
+                case 0xC9:  // RET
+                    cpu.PC = memory::read(state, cpu.SP) | (memory::read(state, cpu.SP + 1) << 8);
+                    cpu.SP += 2;
+                    cycles = 16;
+                    break;
+
+                case 0xCA:  // JP Z, nn
+                    {
+                        uint16_t addr = fetchWord(state);
+                        if (getFlag(state, FLAG_Z)) {
+                            cpu.PC = addr;
+                            cycles = 16;
+                        } else {
+                            cycles = 12;
+                        }
+                    }
+                    break;
+
+                case 0xCB:  // CB prefix (handled separately)
+                    cycles = executeCB(state);
+                    break;
+
+                case 0xCC:  // CALL Z, nn
+                    {
+                        uint16_t addr = fetchWord(state);
+                        if (getFlag(state, FLAG_Z)) {
+                            cpu.SP -= 2;
+                            memory::write(state, cpu.SP, cpu.PC & 0xFF);
+                            memory::write(state, cpu.SP + 1, cpu.PC >> 8);
+                            cpu.PC = addr;
+                            cycles = 24;
+                        } else {
+                            cycles = 12;
+                        }
+                    }
+                    break;
+
+                case 0xCD:  // CALL nn
+                    {
+                        uint16_t addr = fetchWord(state);
+                        cpu.SP -= 2;
+                        memory::write(state, cpu.SP, cpu.PC & 0xFF);
+                        memory::write(state, cpu.SP + 1, cpu.PC >> 8);
+                        cpu.PC = addr;
+                    }
+                    cycles = 24;
+                    break;
+
+                case 0xCE:  // ADC A, n
+                    {
+                        uint8_t val = fetchByte(state);
+                        uint8_t carry = getFlag(state, FLAG_C) ? 1 : 0;
+                        uint16_t result = cpu.A + val + carry;
+                        setFlag(state, FLAG_Z, (result & 0xFF) == 0);
+                        setFlag(state, FLAG_N, false);
+                        setFlag(state, FLAG_H, ((cpu.A & 0x0F) + (val & 0x0F) + carry) > 0x0F);
+                        setFlag(state, FLAG_C, result > 0xFF);
+                        cpu.A = result & 0xFF;
+                    }
+                    cycles = 8;
+                    break;
+
+                case 0xCF:  // RST 08H
+                    cpu.SP -= 2;
+                    memory::write(state, cpu.SP, cpu.PC & 0xFF);
+                    memory::write(state, cpu.SP + 1, cpu.PC >> 8);
+                    cpu.PC = 0x0008;
+                    cycles = 16;
+                    break;
+
+                // ═══════════════════════════════════════════════════════════
+                // 0xD0 - 0xDF
+                // ═══════════════════════════════════════════════════════════
+
+                case 0xD0:  // RET NC
+                    if (!getFlag(state, FLAG_C)) {
+                        cpu.PC = memory::read(state, cpu.SP) | (memory::read(state, cpu.SP + 1) << 8);
+                        cpu.SP += 2;
+                        cycles = 20;
+                    } else {
+                        cycles = 8;
+                    }
+                    break;
+
+                case 0xD1:  // POP DE
+                    cpu.E = memory::read(state, cpu.SP);
+                    cpu.D = memory::read(state, cpu.SP + 1);
+                    cpu.SP += 2;
+                    cycles = 12;
+                    break;
+
+                case 0xD2:  // JP NC, nn
+                    {
+                        uint16_t addr = fetchWord(state);
+                        if (!getFlag(state, FLAG_C)) {
+                            cpu.PC = addr;
+                            cycles = 16;
+                        } else {
+                            cycles = 12;
+                        }
+                    }
+                    break;
+
+                // 0xD3 doesn't exist on GB
+
+                case 0xD4:  // CALL NC, nn
+                    {
+                        uint16_t addr = fetchWord(state);
+                        if (!getFlag(state, FLAG_C)) {
+                            cpu.SP -= 2;
+                            memory::write(state, cpu.SP, cpu.PC & 0xFF);
+                            memory::write(state, cpu.SP + 1, cpu.PC >> 8);
+                            cpu.PC = addr;
+                            cycles = 24;
+                        } else {
+                            cycles = 12;
+                        }
+                    }
+                    break;
+
+                case 0xD5:  // PUSH DE
+                    cpu.SP -= 2;
+                    memory::write(state, cpu.SP, cpu.E);
+                    memory::write(state, cpu.SP + 1, cpu.D);
+                    cycles = 16;
+                    break;
+
+                case 0xD6:  // SUB n
+                    {
+                        uint8_t val = fetchByte(state);
+                        int result = cpu.A - val;
+                        setFlag(state, FLAG_Z, (result & 0xFF) == 0);
+                        setFlag(state, FLAG_N, true);
+                        setFlag(state, FLAG_H, (cpu.A & 0x0F) < (val & 0x0F));
+                        setFlag(state, FLAG_C, result < 0);
+                        cpu.A = result & 0xFF;
+                    }
+                    cycles = 8;
+                    break;
+
+                case 0xD7:  // RST 10H
+                    cpu.SP -= 2;
+                    memory::write(state, cpu.SP, cpu.PC & 0xFF);
+                    memory::write(state, cpu.SP + 1, cpu.PC >> 8);
+                    cpu.PC = 0x0010;
+                    cycles = 16;
+                    break;
+
+                case 0xD8:  // RET C
+                    if (getFlag(state, FLAG_C)) {
+                        cpu.PC = memory::read(state, cpu.SP) | (memory::read(state, cpu.SP + 1) << 8);
+                        cpu.SP += 2;
+                        cycles = 20;
+                    } else {
+                        cycles = 8;
+                    }
+                    break;
+
+                case 0xD9:  // RETI
+                    cpu.PC = memory::read(state, cpu.SP) | (memory::read(state, cpu.SP + 1) << 8);
+                    cpu.SP += 2;
+                    cpu.ime = true;
+                    cycles = 16;
+                    break;
+
+                case 0xDA:  // JP C, nn
+                    {
+                        uint16_t addr = fetchWord(state);
+                        if (getFlag(state, FLAG_C)) {
+                            cpu.PC = addr;
+                            cycles = 16;
+                        } else {
+                            cycles = 12;
+                        }
+                    }
+                    break;
+
+                // 0xDB doesn't exist on GB
+
+                case 0xDC:  // CALL C, nn
+                    {
+                        uint16_t addr = fetchWord(state);
+                        if (getFlag(state, FLAG_C)) {
+                            cpu.SP -= 2;
+                            memory::write(state, cpu.SP, cpu.PC & 0xFF);
+                            memory::write(state, cpu.SP + 1, cpu.PC >> 8);
+                            cpu.PC = addr;
+                            cycles = 24;
+                        } else {
+                            cycles = 12;
+                        }
+                    }
+                    break;
+
+                // 0xDD doesn't exist on GB
+
+                case 0xDE:  // SBC A, n
+                    {
+                        uint8_t val = fetchByte(state);
+                        uint8_t carry = getFlag(state, FLAG_C) ? 1 : 0;
+                        int result = cpu.A - val - carry;
+                        setFlag(state, FLAG_Z, (result & 0xFF) == 0);
+                        setFlag(state, FLAG_N, true);
+                        setFlag(state, FLAG_H, ((cpu.A & 0x0F) - (val & 0x0F) - carry) < 0);
+                        setFlag(state, FLAG_C, result < 0);
+                        cpu.A = result & 0xFF;
+                    }
+                    cycles = 8;
+                    break;
+
+                case 0xDF:  // RST 18H
+                    cpu.SP -= 2;
+                    memory::write(state, cpu.SP, cpu.PC & 0xFF);
+                    memory::write(state, cpu.SP + 1, cpu.PC >> 8);
+                    cpu.PC = 0x0018;
+                    cycles = 16;
+                    break;
+
+                case 0xE0:  // LDH (n), A - write to 0xFF00 + n
+                    memory::write(state, 0xFF00 + fetchByte(state), cpu.A);
+                    cycles = 12;
+                    break;
+
+                case 0xE1:  // POP HL
+                    cpu.L = memory::read(state, cpu.SP);
+                    cpu.H = memory::read(state, cpu.SP + 1);
+                    cpu.SP += 2;
+                    cycles = 12;
+                    break;
+
+                case 0xE2:  // LD (C), A - write to 0xFF00 + C
+                    memory::write(state, 0xFF00 + cpu.C, cpu.A);
+                    cycles = 8;
+                    break;
+
+                // 0xE3 doesn't exist on GB
+                // 0xE4 doesn't exist on GB
+
+                case 0xE5:  // PUSH HL
+                    cpu.SP -= 2;
+                    memory::write(state, cpu.SP, cpu.L);
+                    memory::write(state, cpu.SP + 1, cpu.H);
+                    cycles = 16;
+                    break;
+
+                case 0xE6:  // AND n
+                    cpu.A &= fetchByte(state);
+                    setFlag(state, FLAG_Z, cpu.A == 0);
+                    setFlag(state, FLAG_N, false);
+                    setFlag(state, FLAG_H, true);
+                    setFlag(state, FLAG_C, false);
+                    cycles = 8;
+                    break;
+
+                case 0xE7:  // RST 20H
+                    cpu.SP -= 2;
+                    memory::write(state, cpu.SP, cpu.PC & 0xFF);
+                    memory::write(state, cpu.SP + 1, cpu.PC >> 8);
+                    cpu.PC = 0x0020;
+                    cycles = 16;
+                    break;
+
+                case 0xE8:  // ADD SP, n (signed)
+                    {
+                        int8_t offset = (int8_t)fetchByte(state);
+                        uint16_t sp = cpu.SP;
+                        setFlag(state, FLAG_Z, false);
+                        setFlag(state, FLAG_N, false);
+                        setFlag(state, FLAG_H, ((sp & 0x0F) + (offset & 0x0F)) > 0x0F);
+                        setFlag(state, FLAG_C, ((sp & 0xFF) + (offset & 0xFF)) > 0xFF);
+                        cpu.SP = sp + offset;
+                    }
+                    cycles = 16;
+                    break;
+
+                case 0xE9:  // JP HL
+                    cpu.PC = getHL(state);
+                    cycles = 4;
+                    break;
+
+                case 0xEA:  // LD (nn), A
+                    memory::write(state, fetchWord(state), cpu.A);
+                    cycles = 16;
+                    break;
+
+                // 0xEB doesn't exist on GB
+                // 0xEC doesn't exist on GB
+                // 0xED doesn't exist on GB
+
+                case 0xEE:  // XOR n
+                    cpu.A ^= fetchByte(state);
+                    setFlag(state, FLAG_Z, cpu.A == 0);
+                    setFlag(state, FLAG_N, false);
+                    setFlag(state, FLAG_H, false);
+                    setFlag(state, FLAG_C, false);
+                    cycles = 8;
+                    break;
+
+                case 0xEF:  // RST 28H
+                    cpu.SP -= 2;
+                    memory::write(state, cpu.SP, cpu.PC & 0xFF);
+                    memory::write(state, cpu.SP + 1, cpu.PC >> 8);
+                    cpu.PC = 0x0028;
+                    cycles = 16;
+                    break;
+
+                // ═══════════════════════════════════════════════════════════
+                // 0xF0 - 0xFF
+                // ═══════════════════════════════════════════════════════════
+
+                case 0xF0:  // LDH A, (n) - read from 0xFF00 + n
+                    cpu.A = memory::read(state, 0xFF00 + fetchByte(state));
+                    cycles = 12;
+                    break;
+
+                case 0xF1:  // POP AF
+                    cpu.F = memory::read(state, cpu.SP) & 0xF0;  // Lower 4 bits always 0
+                    cpu.A = memory::read(state, cpu.SP + 1);
+                    cpu.SP += 2;
+                    cycles = 12;
+                    break;
+
+                case 0xF2:  // LD A, (C) - read from 0xFF00 + C
+                    cpu.A = memory::read(state, 0xFF00 + cpu.C);
+                    cycles = 8;
+                    break;
+
+                case 0xF3:  // DI
+                    cpu.ime = false;
+                    cycles = 4;
+                    break;
+
+                // 0xF4 doesn't exist on GB
+
+                case 0xF5:  // PUSH AF
+                    cpu.SP -= 2;
+                    memory::write(state, cpu.SP, cpu.F);
+                    memory::write(state, cpu.SP + 1, cpu.A);
+                    cycles = 16;
+                    break;
+
+                case 0xF6:  // OR n
+                    cpu.A |= fetchByte(state);
+                    setFlag(state, FLAG_Z, cpu.A == 0);
+                    setFlag(state, FLAG_N, false);
+                    setFlag(state, FLAG_H, false);
+                    setFlag(state, FLAG_C, false);
+                    cycles = 8;
+                    break;
+
+                case 0xF7:  // RST 30H
+                    cpu.SP -= 2;
+                    memory::write(state, cpu.SP, cpu.PC & 0xFF);
+                    memory::write(state, cpu.SP + 1, cpu.PC >> 8);
+                    cpu.PC = 0x0030;
+                    cycles = 16;
+                    break;
+
+                case 0xF8:  // LD HL, SP+n (signed)
+                    {
+                        int8_t offset = (int8_t)fetchByte(state);
+                        uint16_t sp = cpu.SP;
+                        setFlag(state, FLAG_Z, false);
+                        setFlag(state, FLAG_N, false);
+                        setFlag(state, FLAG_H, ((sp & 0x0F) + (offset & 0x0F)) > 0x0F);
+                        setFlag(state, FLAG_C, ((sp & 0xFF) + (offset & 0xFF)) > 0xFF);
+                        setHL(state, sp + offset);
+                    }
+                    cycles = 12;
+                    break;
+
+                case 0xF9:  // LD SP, HL
+                    cpu.SP = getHL(state);
+                    cycles = 8;
+                    break;
+
+                case 0xFA:  // LD A, (nn)
+                    cpu.A = memory::read(state, fetchWord(state));
+                    cycles = 16;
+                    break;
+
+                case 0xFB:  // EI
+                    cpu.imeScheduled = true;  // Enable interrupts after next instruction
+                    cycles = 4;
+                    break;
+
+                // 0xFC doesn't exist on GB
+                // 0xFD doesn't exist on GB
+
+                case 0xFE:  // CP n
+                    {
+                        uint8_t val = fetchByte(state);
+                        setFlag(state, FLAG_Z, cpu.A == val);
+                        setFlag(state, FLAG_N, true);
+                        setFlag(state, FLAG_H, (cpu.A & 0x0F) < (val & 0x0F));
+                        setFlag(state, FLAG_C, cpu.A < val);
+                    }
+                    cycles = 8;
+                    break;
+
+                case 0xFF:  // RST 38H
+                    cpu.SP -= 2;
+                    memory::write(state, cpu.SP, cpu.PC & 0xFF);
+                    memory::write(state, cpu.SP + 1, cpu.PC >> 8);
+                    cpu.PC = 0x0038;
+                    cycles = 16;
+                    break;
 
                 default:
                     cycles = 4;

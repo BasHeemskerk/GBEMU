@@ -10,7 +10,7 @@ namespace gb {
 
         void initialize(GBState& state) {
             auto& mem = state.memory;
-            
+
             memset(mem.vram, 0, sizeof(mem.vram));
             memset(mem.wram, 0, sizeof(mem.wram));
             memset(mem.oam, 0, sizeof(mem.oam));
@@ -66,12 +66,10 @@ namespace gb {
             if (address < 0xFF80) {
                 uint8_t reg = address - 0xFF00;
 
-                // Joypad
                 if (reg == IO_JOYP) {
                     return joypad::read(state);
                 }
 
-                // APU registers
                 if (reg >= 0x10 && reg <= 0x3F) {
                     return apu::readRegister(state, reg);
                 }
@@ -136,25 +134,21 @@ namespace gb {
             if (address < 0xFF80) {
                 uint8_t reg = address - 0xFF00;
 
-                // Joypad
                 if (reg == IO_JOYP) {
                     joypad::write(state, value);
                     return;
                 }
 
-                // DIV resets on write
                 if (reg == IO_DIV) {
                     mem.io[IO_DIV] = 0;
                     return;
                 }
 
-                // DMA transfer
                 if (reg == IO_DMA) {
                     doDMA(state, value);
                     return;
                 }
 
-                // APU registers
                 if (reg >= 0x10 && reg <= 0x3F) {
                     apu::writeRegister(state, reg, value);
                     return;

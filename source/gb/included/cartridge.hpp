@@ -3,11 +3,12 @@
 
 #include <cstdint>
 
-namespace gb{
+namespace gb {
 
     struct GBState;
 
-    namespace cartridge{
+    namespace cartridge {
+
         void initialize(GBState& state);
         bool loadRom(GBState& state, const char* filePath);
         void cleanup(GBState& state);
@@ -19,6 +20,7 @@ namespace gb{
         void writeRAM(GBState& state, uint16_t address, uint8_t value);
 
         const char* getTitle(GBState& state);
+
     }
 }
 

@@ -1,12 +1,12 @@
 #include "included/ppu.hpp"
 #include "included/state.hpp"
 #include "included/memory.hpp"
-#include "../include/headers.hpp"
+#include <cstring>
 
 namespace gb {
     namespace ppu {
 
-        void initialize(GBState& state){
+        void initialize(GBState& state) {
             auto& ppu = state.ppu;
 
             memset(ppu.framebuffer, 0, sizeof(ppu.framebuffer));
@@ -14,14 +14,13 @@ namespace gb {
             ppu.scanlineCycles = 0;
         }
 
-        void tick(GBState& state, int cycles){
+        void tick(GBState& state, int cycles) {
             auto& ppu = state.ppu;
             auto& io = state.memory.io;
 
             uint8_t lcdc = io[memory::IO_LCDC];
 
-            //lcd disabled
-            if (!(lcdc & 0x80)){
+            if (!(lcdc & 0x80)) {
                 return;
             }
 
@@ -42,14 +41,8 @@ namespace gb {
                 case MODE_DRAWING:
                     if (ppu.scanlineCycles >= CYCLES_DRAWING) {
                         ppu.scanlineCycles -= CYCLES_DRAWING;
-
-                        // Render the scanline
                         renderScanline(state);
-
-                        // Enter HBlank
                         io[memory::IO_STAT] = (stat & 0xFC) | MODE_HBLANK;
-
-                        // STAT HBlank interrupt
                         if (stat & 0x08) {
                             io[memory::IO_IF] |= 0x02;
                         }
@@ -63,26 +56,18 @@ namespace gb {
                         ly = io[memory::IO_LY];
 
                         if (ly >= SCANLINES_VISIBLE) {
-                            // Enter VBlank
                             io[memory::IO_STAT] = (stat & 0xFC) | MODE_VBLANK;
-                            io[memory::IO_IF] |= 0x01;  // VBlank interrupt
-
-                            // STAT VBlank interrupt
+                            io[memory::IO_IF] |= 0x01;
                             if (stat & 0x10) {
                                 io[memory::IO_IF] |= 0x02;
                             }
-
                             ppu.frameReady = true;
                         } else {
-                            // Next scanline
                             io[memory::IO_STAT] = (stat & 0xFC) | MODE_OAM;
-
-                            // STAT OAM interrupt
                             if (stat & 0x20) {
                                 io[memory::IO_IF] |= 0x02;
                             }
                         }
-
                         checkLYC(state);
                     }
                     break;
@@ -94,38 +79,33 @@ namespace gb {
                         ly = io[memory::IO_LY];
 
                         if (ly >= SCANLINES_TOTAL) {
-                            // Back to top
                             io[memory::IO_LY] = 0;
                             io[memory::IO_STAT] = (stat & 0xFC) | MODE_OAM;
-
-                            // STAT OAM interrupt
                             if (stat & 0x20) {
                                 io[memory::IO_IF] |= 0x02;
                             }
                         }
-
                         checkLYC(state);
                     }
                     break;
             }
-
         }
 
-        void checkLYC(GBState& state){
+        void checkLYC(GBState& state) {
             auto& io = state.memory.io;
             uint8_t stat = io[memory::IO_STAT];
 
-            if (io[memory::IO_LY] == io[memory::IO_LYC]){
-                io[memory::IO_STAT] |= 0x04;  //coincidence flag
+            if (io[memory::IO_LY] == io[memory::IO_LYC]) {
+                io[memory::IO_STAT] |= 0x04;
                 if (stat & 0x40) {
-                    io[memory::IO_IF] |= 0x02;  // STAT interrupt
+                    io[memory::IO_IF] |= 0x02;
                 }
             } else {
                 io[memory::IO_STAT] &= ~0x04;
             }
         }
 
-        void renderScanline(GBState& state){
+        void renderScanline(GBState& state) {
             auto& io = state.memory.io;
             uint8_t lcdc = io[memory::IO_LCDC];
 
@@ -273,9 +253,8 @@ namespace gb {
                     uint8_t bit = flipX ? px : (7 - px);
                     uint8_t colorNum = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
 
-                    if (colorNum == 0) continue;  // Transparent
+                    if (colorNum == 0) continue;
 
-                    // BG priority
                     if (priority && ppu.framebuffer[ly * SCREEN_WIDTH + screenX] != 0) continue;
 
                     uint8_t color = getColor(palette, colorNum);
@@ -288,5 +267,5 @@ namespace gb {
             return (palette >> (colorNum * 2)) & 0x03;
         }
 
-    }  
-} 
+    }
+}

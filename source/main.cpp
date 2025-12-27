@@ -5,12 +5,24 @@
 
 #include "include/gui.hpp"
 #include "gb/included/gb.hpp"
-#include "gb/included/ppu.hpp"
+#include "gb/included/state.hpp"
 #include "gb/included/joypad.hpp"
-#include "gb/included/cartridge.hpp"
-#include "gb/included/cpu.hpp"
-#include "gb/included/memory.hpp"
 #include "gb/included/apu.hpp"
+
+// Update joypad from 3DS input
+void updateJoypad() {
+    u32 held = hidKeysHeld();
+    gb::GBState& state = gb::getState();
+    
+    gb::joypad::setButton(state, gb::joypad::BTN_A, held & KEY_A);
+    gb::joypad::setButton(state, gb::joypad::BTN_B, held & KEY_B);
+    gb::joypad::setButton(state, gb::joypad::BTN_START, held & KEY_START);
+    gb::joypad::setButton(state, gb::joypad::BTN_SELECT, held & KEY_SELECT);
+    gb::joypad::setButton(state, gb::joypad::BTN_UP, held & KEY_UP);
+    gb::joypad::setButton(state, gb::joypad::BTN_DOWN, held & KEY_DOWN);
+    gb::joypad::setButton(state, gb::joypad::BTN_LEFT, held & KEY_LEFT);
+    gb::joypad::setButton(state, gb::joypad::BTN_RIGHT, held & KEY_RIGHT);
+}
 
 int main(int argc, char** argv) {
     gfxInitDefault();
@@ -21,9 +33,9 @@ int main(int argc, char** argv) {
 
     romfsInit();
     gui::initialize();
+    gb::apu::initAudio();
 
     while (aptMainLoop()) {
-        // single hidScanInput call per frame
         hidScanInput();
         u32 held = hidKeysHeld();
 
@@ -34,7 +46,7 @@ int main(int argc, char** argv) {
         gui::update();
 
         if (gui::currentState == gui::State::RUNNING) {
-            gb::joypad::update();
+            updateJoypad();
             gb::runFrame();
         }
 

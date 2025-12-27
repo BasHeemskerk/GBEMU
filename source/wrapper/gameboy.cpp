@@ -1,31 +1,29 @@
 #include "included/gameboy.hpp"
 #include "../gb/included/gb.hpp"
-#include "../gb/included/ppu.hpp"
-#include "../gb/included/apu.hpp"
+#include "../gb/included/state.hpp"
 #include "../gb/included/joypad.hpp"
-#include "../gb/included/cartridge.hpp"
 
-GameBoy::GameBoy() : romLoaded(false){
+GameBoy::GameBoy() : romLoaded(false) {
     input.clear();
 }
 
-GameBoy::~GameBoy(){
-    //cleanup if needed
+GameBoy::~GameBoy() {
+    // cleanup if needed
 }
 
-void GameBoy::init(){
+void GameBoy::init() {
     gb::initialize();
     romLoaded = false;
     input.clear();
 }
 
-void GameBoy::reset(){
+void GameBoy::reset() {
     gb::initialize();
     input.clear();
 }
 
-void GameBoy::runFrame(){
-    if (!romLoaded){
+void GameBoy::runFrame() {
+    if (!romLoaded) {
         return;
     }
 
@@ -33,8 +31,8 @@ void GameBoy::runFrame(){
     gb::runFrame();
 }
 
-void GameBoy::step(){
-    if (!romLoaded){
+void GameBoy::step() {
+    if (!romLoaded) {
         return;
     }
 
@@ -42,10 +40,7 @@ void GameBoy::step(){
     gb::step();
 }
 
-
-//rom management
-
-bool GameBoy::loadROM(const char* filepath){
+bool GameBoy::loadROM(const char* filepath) {
     romLoaded = gb::loadROM(filepath);
     return romLoaded;
 }
@@ -55,20 +50,20 @@ bool GameBoy::isROMLoaded() const {
 }
 
 const char* GameBoy::getROMTitle() const {
-    return gb::cartridge::getTitle();
+    return gb::getROMTitle();
 }
 
-
-//input
 void GameBoy::updateInput() {
-    gb::joypad::buttonA = input.a;
-    gb::joypad::buttonB = input.b;
-    gb::joypad::buttonStart = input.start;
-    gb::joypad::buttonSelect = input.select;
-    gb::joypad::dpadUp = input.up;
-    gb::joypad::dpadDown = input.down;
-    gb::joypad::dpadLeft = input.left;
-    gb::joypad::dpadRight = input.right;
+    gb::GBState& state = gb::getState();
+    
+    gb::joypad::setButton(state, gb::joypad::BTN_A, input.a);
+    gb::joypad::setButton(state, gb::joypad::BTN_B, input.b);
+    gb::joypad::setButton(state, gb::joypad::BTN_START, input.start);
+    gb::joypad::setButton(state, gb::joypad::BTN_SELECT, input.select);
+    gb::joypad::setButton(state, gb::joypad::BTN_UP, input.up);
+    gb::joypad::setButton(state, gb::joypad::BTN_DOWN, input.down);
+    gb::joypad::setButton(state, gb::joypad::BTN_LEFT, input.left);
+    gb::joypad::setButton(state, gb::joypad::BTN_RIGHT, input.right);
 }
 
 uint8_t GameBoy::getInputState() const {
@@ -95,42 +90,36 @@ void GameBoy::setInputState(uint8_t state) {
     input.right  = state & 0x80;
 }
 
-
-//video output
-uint8_t* GameBoy::getFramebuffer(){
-    return gb::ppu::framebuffer;
+uint8_t* GameBoy::getFramebuffer() {
+    return gb::getFramebuffer();
 }
 
 const uint8_t* GameBoy::getFramebuffer() const {
-    return gb::ppu::framebuffer;
+    return gb::getFramebuffer();
 }
 
 bool GameBoy::isFrameReady() const {
-    return gb::ppu::frameReady;
+    return gb::isFrameReady();
 }
 
-void GameBoy::clearFrameReady(){
-    gb::ppu::frameReady = false;
+void GameBoy::clearFrameReady() {
+    gb::setFrameReady(false);
 }
 
-
-//audio output
-int16_t* GameBoy::getAudioBuffer(){
-    return gb::apu::audioBuffer;
+int16_t* GameBoy::getAudioBuffer() {
+    return gb::getAudioBuffer();
 }
 
 int GameBoy::getAudioBufferPosition() const {
-    return gb::apu::bufferPosition;
+    return gb::getAudioBufferPosition();
 }
 
-void GameBoy::clearAudioBuffer(){
-    gb::apu::bufferPosition = 0;
+void GameBoy::clearAudioBuffer() {
+    gb::setAudioBufferPosition(0);
 }
 
-
-//save data
 bool GameBoy::hasSRAM() const {
-    return gb::cartridge::ramSize > 0;
+    return gb::getRAMSize() > 0;
 }
 
 bool GameBoy::saveSRAM(const char* filepath) {

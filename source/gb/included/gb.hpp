@@ -5,20 +5,37 @@
 
 namespace gb {
 
-    // initialize all subsystems
+    struct GBState;
+
+    // Global state accessor
+    GBState& getState();
+
+    // Initialize all subsystems
     void initialize();
 
-    // load a ROM file
+    // Load a ROM file
     bool loadROM(const char* filepath);
 
-    // run one frame (until vblank)
+    // Run one frame (until vblank)
     void runFrame();
 
-    // run a single CPU step
+    // Run a single CPU step
     void step();
 
-    // handle interrupts
+    // Handle interrupts
     void handleInterrupts();
+
+    // Accessors for external code
+    uint8_t* getFramebuffer();
+    bool isFrameReady();
+    void setFrameReady(bool ready);
+
+    int16_t* getAudioBuffer();
+    int getAudioBufferPosition();
+    void setAudioBufferPosition(int pos);
+
+    const char* getROMTitle();
+    int getRAMSize();
 
 }  // namespace gb
 

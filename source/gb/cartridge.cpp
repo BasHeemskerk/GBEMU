@@ -1,13 +1,12 @@
 #include "included/cartridge.hpp"
 #include "included/state.hpp"
-#include "../include/headers.hpp"
 #include <cstring>
 #include <cstdio>
 
-namespace gb{
-    namespace cartridge{
+namespace gb {
+    namespace cartridge {
 
-        void initialize(GBState& state){
+        void initialize(GBState& state) {
             auto& cart = state.cartridge;
 
             cart.rom = nullptr;
@@ -23,14 +22,14 @@ namespace gb{
             memset(cart.title, 0, sizeof(cart.title));
         }
 
-        void cleanup(GBState& state){
+        void cleanup(GBState& state) {
             auto& cart = state.cartridge;
 
-            if (cart.rom){
+            if (cart.rom) {
                 delete[] cart.rom;
                 cart.rom = nullptr;
             }
-            if (cart.ram){
+            if (cart.ram) {
                 delete[] cart.ram;
                 cart.ram = nullptr;
             }
@@ -38,31 +37,28 @@ namespace gb{
             cart.loaded = false;
         }
 
-        bool loadRom(GBState& state, const char* filePath){
+        bool loadRom(GBState& state, const char* filePath) {
             auto& cart = state.cartridge;
 
-            //cleanup prev rom
             cleanup(state);
 
             FILE* file = fopen(filePath, "rb");
-            if (!file){
+            if (!file) {
                 return false;
             }
 
-            //get file size
             fseek(file, 0, SEEK_END);
             cart.romSize = ftell(file);
             fseek(file, 0, SEEK_SET);
 
-            //allocate and read ROM
             cart.rom = new uint8_t[cart.romSize];
             fread(cart.rom, 1, cart.romSize, file);
             fclose(file);
 
             memset(cart.title, 0, sizeof(cart.title));
-            for (int i = 0; i < 16; i++){
+            for (int i = 0; i < 16; i++) {
                 char c = cart.rom[0x134 + i];
-                if (c >= 32 && c < 127){
+                if (c >= 32 && c < 127) {
                     cart.title[i] = c;
                 } else {
                     cart.title[i] = '\0';
@@ -70,7 +66,6 @@ namespace gb{
                 }
             }
 
-            //detect mapper type (0x147)
             uint8_t cartType = cart.rom[0x147];
             switch (cartType) {
                 case 0x00:
@@ -90,7 +85,6 @@ namespace gb{
                     break;
             }
 
-            //detect RAM size (0x149)
             uint8_t ramType = cart.rom[0x149];
             switch (ramType) {
                 case 0x00: cart.ramSize = 0; break;
@@ -102,8 +96,7 @@ namespace gb{
                 default: cart.ramSize = 0; break;
             }
 
-            //allocate ram if needed
-            if (cart.ramSize > 0){
+            if (cart.ramSize > 0) {
                 cart.ram = new uint8_t[cart.ramSize];
                 memset(cart.ram, 0, cart.ramSize);
             }
@@ -117,19 +110,17 @@ namespace gb{
             return true;
         }
 
-        uint8_t read(GBState& state, uint16_t address){
+        uint8_t read(GBState& state, uint16_t address) {
             auto& cart = state.cartridge;
 
-            if (!cart.rom){
+            if (!cart.rom) {
                 return 0xFF;
             }
 
-            //bank 0: 0x0000-0x3FFF
             if (address < 0x4000) {
                 return cart.rom[address];
             }
 
-            //bank N: 0x4000-0x7FFF
             if (address < 0x8000) {
                 int bankOffset = cart.romBank * 0x4000;
                 return cart.rom[bankOffset + (address - 0x4000)];
@@ -197,36 +188,37 @@ namespace gb{
             }
         }
 
-        void readRAM(GBState& state, uint16_t address){
+        uint8_t readRAM(GBState& state, uint16_t address) {
             auto& cart = state.cartridge;
 
-            if (!cart.ramEnabled || !cart.ram){
+            if (!cart.ramEnabled || !cart.ram) {
                 return 0xFF;
             }
 
             int offset = (cart.ramBank * 0x2000) + (address - 0xA000);
-            if (offset < cart.ramSize){
+            if (offset < cart.ramSize) {
                 return cart.ram[offset];
             }
 
             return 0xFF;
         }
 
-        void writeRAM(GBState& state, uint16_t address, uint8_t value){
+        void writeRAM(GBState& state, uint16_t address, uint8_t value) {
             auto& cart = state.cartridge;
 
-            if (!cart.ramEnabled || !cart.ram){
+            if (!cart.ramEnabled || !cart.ram) {
                 return;
             }
 
             int offset = (cart.ramBank * 0x2000) + (address - 0xA000);
-            if (offset < cart.ramSize){
+            if (offset < cart.ramSize) {
                 cart.ram[offset] = value;
             }
         }
 
-        const char* getTitle(GBState& state){
+        const char* getTitle(GBState& state) {
             return state.cartridge.title;
         }
+
     }
 }

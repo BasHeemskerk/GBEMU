@@ -3,20 +3,20 @@
 
 #include <cstdint>
 
-namespace gb{
+namespace gb {
 
     struct GBState;
 
-    namespace timer{
-        //timer registers in IO
-        constexpr uint8_t REG_DIV = 0x04; //divider
-        constexpr uint8_t REG_TIMA = 0x05; //timer counter
-        constexpr uint8_t REG_TMA = 0x06; //timer module
-        constexpr uint8_t REG_TAC = 0x07; //timer control
+    namespace timer {
 
-        //functions
+        constexpr uint8_t REG_DIV = 0x04;
+        constexpr uint8_t REG_TIMA = 0x05;
+        constexpr uint8_t REG_TMA = 0x06;
+        constexpr uint8_t REG_TAC = 0x07;
+
         void initialize(GBState& state);
         void tick(GBState& state, int cycles);
+
     }
 }
 

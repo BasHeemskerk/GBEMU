@@ -5,12 +5,11 @@
 namespace gb {
     namespace apu {
 
-        // Duty cycle patterns for square waves
         const uint8_t dutyPatterns[4] = {
-            0b00000001,  // 12.5%
-            0b00000011,  // 25%
-            0b00001111,  // 50%
-            0b11111100   // 75%
+            0b00000001,
+            0b00000011,
+            0b00001111,
+            0b11111100
         };
 
         void initialize(GBState& state) {
@@ -22,7 +21,6 @@ namespace gb {
             apu.frameSequencerCycles = 0;
             apu.frameSequencerStep = 0;
 
-            // Reset channel 1
             auto& ch1 = apu.ch1;
             ch1.enabled = false;
             ch1.frequency = 0;
@@ -40,7 +38,6 @@ namespace gb {
             ch1.shadowFrequency = 0;
             ch1.lengthCounter = 0;
 
-            // Reset channel 2
             auto& ch2 = apu.ch2;
             ch2.enabled = false;
             ch2.frequency = 0;
@@ -53,7 +50,6 @@ namespace gb {
             ch2.envelopeIncrease = false;
             ch2.lengthCounter = 0;
 
-            // Reset channel 3
             auto& ch3 = apu.ch3;
             ch3.enabled = false;
             ch3.dacEnabled = false;
@@ -63,7 +59,6 @@ namespace gb {
             ch3.volume = 0;
             ch3.lengthCounter = 0;
 
-            // Reset channel 4
             auto& ch4 = apu.ch4;
             ch4.enabled = false;
             ch4.volume = 0;
@@ -77,12 +72,10 @@ namespace gb {
             ch4.lfsr = 0x7FFF;
             ch4.lengthCounter = 0;
 
-            // Master control
             apu.masterEnable = true;
             apu.masterVolumeLeft = 7;
             apu.masterVolumeRight = 7;
 
-            // Panning - all channels to both speakers
             apu.ch1Left = apu.ch1Right = true;
             apu.ch2Left = apu.ch2Right = true;
             apu.ch3Left = apu.ch3Right = true;
@@ -120,7 +113,6 @@ namespace gb {
             switch (apu.frameSequencerStep) {
                 case 0:
                 case 4:
-                    // Length counter
                     if (ch1.lengthCounter > 0 && (io[0x14] & 0x40)) {
                         ch1.lengthCounter--;
                         if (ch1.lengthCounter == 0) ch1.enabled = false;
@@ -141,7 +133,6 @@ namespace gb {
 
                 case 2:
                 case 6:
-                    // Length counter
                     if (ch1.lengthCounter > 0 && (io[0x14] & 0x40)) {
                         ch1.lengthCounter--;
                         if (ch1.lengthCounter == 0) ch1.enabled = false;
@@ -159,7 +150,6 @@ namespace gb {
                         if (ch4.lengthCounter == 0) ch4.enabled = false;
                     }
 
-                    // Sweep (channel 1 only)
                     if (ch1.sweepPeriod > 0) {
                         ch1.sweepTimer--;
                         if (ch1.sweepTimer <= 0) {
@@ -185,7 +175,6 @@ namespace gb {
                     break;
 
                 case 7:
-                    // Envelope
                     if (ch1.envelopePeriod > 0) {
                         ch1.envelopeTimer--;
                         if (ch1.envelopeTimer <= 0) {
@@ -285,7 +274,6 @@ namespace gb {
             int16_t left = 0;
             int16_t right = 0;
 
-            // Channel 1
             if (apu.ch1.enabled) {
                 uint8_t duty = dutyPatterns[apu.ch1.duty];
                 int sample = (duty >> apu.ch1.dutyPosition) & 1 ? apu.ch1.volume : -apu.ch1.volume;
@@ -293,7 +281,6 @@ namespace gb {
                 if (apu.ch1Right) right += sample;
             }
 
-            // Channel 2
             if (apu.ch2.enabled) {
                 uint8_t duty = dutyPatterns[apu.ch2.duty];
                 int sample = (duty >> apu.ch2.dutyPosition) & 1 ? apu.ch2.volume : -apu.ch2.volume;
@@ -301,7 +288,6 @@ namespace gb {
                 if (apu.ch2Right) right += sample;
             }
 
-            // Channel 3
             if (apu.ch3.enabled && apu.ch3.dacEnabled) {
                 uint8_t sampleByte = mem.io[0x30 + (apu.ch3.position / 2)];
                 uint8_t sample4bit = (apu.ch3.position & 1) ? (sampleByte & 0x0F) : (sampleByte >> 4);
@@ -319,18 +305,15 @@ namespace gb {
                 if (apu.ch3Right) right += sample;
             }
 
-            // Channel 4
             if (apu.ch4.enabled) {
                 int sample = (apu.ch4.lfsr & 1) ? -apu.ch4.volume : apu.ch4.volume;
                 if (apu.ch4Left) left += sample;
                 if (apu.ch4Right) right += sample;
             }
 
-            // Apply master volume and scale to 16-bit
             left = (left * apu.masterVolumeLeft * 64);
             right = (right * apu.masterVolumeRight * 64);
 
-            // Write to buffer
             if (apu.bufferPosition < APUState::BUFFER_SIZE) {
                 apu.audioBuffer[apu.bufferPosition * 2] = left;
                 apu.audioBuffer[apu.bufferPosition * 2 + 1] = right;
@@ -346,24 +329,20 @@ namespace gb {
             auto& ch3 = apu.ch3;
             auto& ch4 = apu.ch4;
 
-            // Store raw value in IO
             io[reg] = value;
 
             switch (reg) {
-                // NR10 - Channel 1 sweep
                 case 0x10:
                     ch1.sweepPeriod = (value >> 4) & 0x07;
                     ch1.sweepNegate = value & 0x08;
                     ch1.sweepShift = value & 0x07;
                     break;
 
-                // NR11 - Channel 1 duty and length
                 case 0x11:
                     ch1.duty = (value >> 6) & 0x03;
                     ch1.lengthCounter = 64 - (value & 0x3F);
                     break;
 
-                // NR12 - Channel 1 envelope
                 case 0x12:
                     ch1.volume = (value >> 4) & 0x0F;
                     ch1.envelopeIncrease = value & 0x08;
@@ -374,12 +353,10 @@ namespace gb {
                     }
                     break;
 
-                // NR13 - Channel 1 frequency low
                 case 0x13:
                     ch1.frequency = (ch1.frequency & 0x700) | value;
                     break;
 
-                // NR14 - Channel 1 frequency high + trigger
                 case 0x14:
                     ch1.frequency = (ch1.frequency & 0xFF) | ((value & 0x07) << 8);
                     if (value & 0x80) {
@@ -393,13 +370,11 @@ namespace gb {
                     }
                     break;
 
-                // NR21 - Channel 2 duty and length
                 case 0x16:
                     ch2.duty = (value >> 6) & 0x03;
                     ch2.lengthCounter = 64 - (value & 0x3F);
                     break;
 
-                // NR22 - Channel 2 envelope
                 case 0x17:
                     ch2.volume = (value >> 4) & 0x0F;
                     ch2.envelopeIncrease = value & 0x08;
@@ -410,12 +385,10 @@ namespace gb {
                     }
                     break;
 
-                // NR23 - Channel 2 frequency low
                 case 0x18:
                     ch2.frequency = (ch2.frequency & 0x700) | value;
                     break;
 
-                // NR24 - Channel 2 frequency high + trigger
                 case 0x19:
                     ch2.frequency = (ch2.frequency & 0xFF) | ((value & 0x07) << 8);
                     if (value & 0x80) {
@@ -427,7 +400,6 @@ namespace gb {
                     }
                     break;
 
-                // NR30 - Channel 3 enable
                 case 0x1A:
                     ch3.dacEnabled = value & 0x80;
                     if (!ch3.dacEnabled) {
@@ -435,22 +407,18 @@ namespace gb {
                     }
                     break;
 
-                // NR31 - Channel 3 length
                 case 0x1B:
                     ch3.lengthCounter = 256 - value;
                     break;
 
-                // NR32 - Channel 3 volume
                 case 0x1C:
                     ch3.volume = (value >> 5) & 0x03;
                     break;
 
-                // NR33 - Channel 3 frequency low
                 case 0x1D:
                     ch3.frequency = (ch3.frequency & 0x700) | value;
                     break;
 
-                // NR34 - Channel 3 frequency high + trigger
                 case 0x1E:
                     ch3.frequency = (ch3.frequency & 0xFF) | ((value & 0x07) << 8);
                     if (value & 0x80) {
@@ -461,12 +429,10 @@ namespace gb {
                     }
                     break;
 
-                // NR41 - Channel 4 length
                 case 0x20:
                     ch4.lengthCounter = 64 - (value & 0x3F);
                     break;
 
-                // NR42 - Channel 4 envelope
                 case 0x21:
                     ch4.volume = (value >> 4) & 0x0F;
                     ch4.envelopeIncrease = value & 0x08;
@@ -477,14 +443,12 @@ namespace gb {
                     }
                     break;
 
-                // NR43 - Channel 4 frequency
                 case 0x22:
                     ch4.shiftAmount = (value >> 4) & 0x0F;
                     ch4.widthMode = value & 0x08;
                     ch4.divisor = value & 0x07;
                     break;
 
-                // NR44 - Channel 4 trigger
                 case 0x23:
                     if (value & 0x80) {
                         ch4.enabled = true;
@@ -497,13 +461,11 @@ namespace gb {
                     }
                     break;
 
-                // NR50 - Master volume
                 case 0x24:
                     apu.masterVolumeLeft = (value >> 4) & 0x07;
                     apu.masterVolumeRight = value & 0x07;
                     break;
 
-                // NR51 - Channel panning
                 case 0x25:
                     apu.ch4Left = value & 0x80;
                     apu.ch3Left = value & 0x40;
@@ -515,7 +477,6 @@ namespace gb {
                     apu.ch1Right = value & 0x01;
                     break;
 
-                // NR52 - Master enable
                 case 0x26:
                     apu.masterEnable = value & 0x80;
                     if (!apu.masterEnable) {
@@ -544,6 +505,15 @@ namespace gb {
                 default:
                     return io[reg];
             }
+        }
+
+        // Platform-specific audio (3DS) - stubs for now
+        void initAudio() {
+            // TODO: Initialize 3DS audio (ndsp)
+        }
+
+        void exitAudio() {
+            // TODO: Cleanup 3DS audio
         }
 
     }

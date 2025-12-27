@@ -1,9 +1,6 @@
 #include "include/gui.hpp"
 #include "gb/included/gb.hpp"
-#include "gb/included/ppu.hpp"
-#include "gb/included/joypad.hpp"
-#include "gb/included/cartridge.hpp"
-#include "gb/included/apu.hpp"
+#include "gb/included/state.hpp"
 #include <dirent.h>
 #include <cstring>
 #include <cstdio>
@@ -311,6 +308,7 @@ namespace gui {
 
     void renderGameScreen() {
         u8* fb = gfxGetFramebuffer(GFX_TOP, GFX_LEFT, NULL, NULL);
+        uint8_t* gbFramebuffer = gb::getFramebuffer();
 
         // GB: 160x144, Target: fill 240 height
         // Scale: 240/144 = 1.666... 
@@ -354,7 +352,7 @@ namespace gui {
                     int gbX = ((screenX - offsetX) * 160) / outW;
                     if (gbX >= 160) gbX = 159;
                     
-                    uint8_t ci = gb::ppu::framebuffer[gbY * 160 + gbX];
+                    uint8_t ci = gbFramebuffer[gbY * 160 + gbX];
                     ci &= 0x03;
                     
                     fb[idx] = gbColorsB[ci];
