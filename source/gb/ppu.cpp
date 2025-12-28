@@ -6,12 +6,38 @@
 namespace gb {
     namespace ppu {
 
+        //the lookup table - decodes tile bytes to pixel colors
+        // tileLUT[high_byte][low_byte][pixel_index] = color_index (0-3)
+        uint8_t tileLUT[256][256][8];
+
+        void buildLUT(){
+            //for every possible combo of high and low bytes
+            for (int high = 0; high < 256; high++){
+                for (int low = 0; low < 256; low++){
+                    //decode all 8 pixels
+                    for (int px = 0; px < 8; px++){
+                        int bit = 7 - px;
+                        uint8_t low_bit = (low >> bit) & 1;
+                        uint8_t high_bit = (high >> bit) & 1;
+                        tileLUT[high][low][px] = (high_bit << 1) | low_bit;
+                    }
+                }
+            }
+        }
+
         void initialize(GBState& state) {
             auto& ppu = state.ppu;
 
             memset(ppu.framebuffer, 0, sizeof(ppu.framebuffer));
             ppu.frameReady = false;
             ppu.scanlineCycles = 0;
+
+            //build the lookup table from here
+            static bool lutBuilt = false;
+            if (!lutBuilt){
+                buildLUT();
+                lutBuilt = true;
+            }
         }
 
         void tick(GBState& state, int cycles) {
@@ -128,36 +154,63 @@ namespace gb {
             bool signedTiles = !(lcdc & 0x10);
 
             uint8_t y = ly + scy;
-            uint8_t tileY = y / 8;
-            uint8_t pixelY = y % 8;
+            uint8_t tileY = y >> 3; //same as y / 8 but way faster
+            uint8_t pixelY = y & 0x07; //same as y % 8 but also faster
 
-            for (int screenX = 0; screenX < SCREEN_WIDTH; screenX++) {
-                uint8_t x = screenX + scx;
-                uint8_t tileX = x / 8;
-                uint8_t pixelX = x % 8;
+            //get pointer to this scanline in framebuffer
+            uint8_t* fb = &ppu.framebuffer[ly * SCREEN_WIDTH];
 
-                uint16_t mapAddr = tileMap + (tileY * 32) + tileX;
-                uint8_t tileNum = mem.vram[mapAddr];
+            //precompute the 4 possible colors from palette
+            uint8_t colors[4];
+            colors[0] = (bgp >> 0) & 0x03;
+            colors[1] = (bgp >> 2) & 0x03;
+            colors[2] = (bgp >> 4) & 0x03;
+            colors[3] = (bgp >> 6) & 0x03;
 
+            //calculate base map address for this tile row
+            uint16_t mapRowBase = tileMap + (tileY << 5); //tileY * 32
+
+            int screenX = 0;
+            uint8_t x = scx;
+
+            while (screenX < SCREEN_WIDTH) {
+                //uint8_t x = screenX + scx;
+                uint8_t tileX = x >> 3; //same as x / 8
+                uint8_t startPixel = x & 0x07; //same as x % 8
+
+                //fetch tile number from map
+                uint8_t tileNum = mem.vram[mapRowBase + tileX];
+
+                //calculate tile data address
                 uint16_t tileAddr;
-                if (signedTiles) {
-                    tileAddr = tileData + ((int8_t)tileNum + 128) * 16;
+                if (signedTiles){
+                    tileAddr = tileData + (((int8_t)tileNum + 128) << 4);
                 } else {
-                    tileAddr = tileData + tileNum * 16;
+                    tileAddr = tileData + (tileNum << 4);
+                }
+                tileAddr += pixelY << 1; //add row offset (2bytes per row)
+
+                //fetch the two bytes for this tile row
+                uint8_t low = mem.vram[tileAddr];
+                uint8_t high = mem.vram[tileAddr + 1];
+
+                //use the lookup table to get all 8 pixel colors
+                uint8_t* tilePixels = tileLUT[high][low];
+
+                //how many pixels from this tile do we need?
+                int endPixel = 8;
+                int remaining = SCREEN_WIDTH - screenX;
+                if (remaining < (8 - startPixel)){
+                    endPixel = startPixel + remaining;
                 }
 
-                tileAddr += pixelY * 2;
+                //copy pixel from tile to framebuffer
+                for (int px = startPixel; px < endPixel; px++){
+                    fb[screenX++] = colors[tilePixels[px]];
+                }
 
-                uint8_t lo = mem.vram[tileAddr];
-                uint8_t hi = mem.vram[tileAddr + 1];
-
-                uint8_t bit = 7 - pixelX;
-                uint8_t loBit = (lo >> bit) & 1;
-                uint8_t hiBit = (hi >> bit) & 1;
-                uint8_t colorNum = (hiBit << 1) | loBit;
-                uint8_t color = getColor(bgp, colorNum);
-
-                ppu.framebuffer[ly * SCREEN_WIDTH + screenX] = color;
+                //move to next tile
+                x = (x + (endPixel - startPixel)) & 0xFF;
             }
         }
 
@@ -172,46 +225,78 @@ namespace gb {
             uint8_t wx = io[memory::IO_WX];
             uint8_t bgp = io[memory::IO_BGP];
 
+            //window not visible on this scanline
             if (ly < wy) return;
             if (wx > 166) return;
 
+            //get tile map and data addresses from lcdc
             uint16_t tileMap = (lcdc & 0x40) ? 0x1C00 : 0x1800;
             uint16_t tileData = (lcdc & 0x10) ? 0x0000 : 0x0800;
             bool signedTiles = !(lcdc & 0x10);
 
+            //calculate which row of tiles we are on
             uint8_t y = ly - wy;
-            uint8_t tileY = y / 8;
-            uint8_t pixelY = y % 8;
+            uint8_t tileY = y >> 3; //same as y / 8
+            uint8_t pixelY = y & 0x07; //same as y % 7
 
-            for (int screenX = 0; screenX < SCREEN_WIDTH; screenX++) {
-                int windowX = screenX - (wx - 7);
-                if (windowX < 0) continue;
+            //pointer to current scanline in framebuffer
+            uint8_t* fb = &ppu.framebuffer[ly * SCREEN_WIDTH];
 
-                uint8_t tileX = windowX / 8;
-                uint8_t pixelX = windowX % 8;
+            //precompute palette colors
+            uint8_t colors[4];
+            colors[0] = (bgp >> 0) & 0x03;
+            colors[1] = (bgp >> 2) & 0x03;
+            colors[2] = (bgp >> 4) & 0x03;
+            colors[3] = (bgp >> 6) & 0x03;
 
-                uint16_t mapAddr = tileMap + (tileY * 32) + tileX;
-                uint8_t tileNum = mem.vram[mapAddr];
+            //base address for this row of tiles in the map
+            uint16_t mapRowBase = tileMap + (tileY << 5);
 
+            //window starts at wx - 7
+            int windowStartX = wx - 7;
+            if (windowStartX < 0){
+                windowStartX = 0;
+            }
+
+            int windowX = 0;
+            for (int screenX = windowStartX; screenX < SCREEN_WIDTH;){
+                //get tile coordinates
+                uint8_t tileX = windowX >> 3;
+                uint8_t startPixel = windowX & 0x07;
+
+                //fetch tile number from map
+                uint8_t tileNum = mem.vram[mapRowBase + tileX];
+
+                //calculate tile data address
                 uint16_t tileAddr;
-                if (signedTiles) {
-                    tileAddr = tileData + ((int8_t)tileNum + 128) * 16;
+                if (signedTiles){
+                    tileAddr = tileData + (((int8_t)tileNum + 128) << 4);
                 } else {
-                    tileAddr = tileData + tileNum * 16;
+                    tileAddr = tileData + (tileNum << 4);
+                }
+                tileAddr += pixelY << 1;
+
+                //fetch tile row bytes
+                uint8_t low = mem.vram[tileAddr];
+                uint8_t high = mem.vram[tileAddr + 1];
+
+                //decode tile row using lookup table
+                uint8_t* tilePixels = tileLUT[high][low];
+
+                //calculate how many pixels to draw from this tile
+                int endPixel = 8;
+                int remaining = SCREEN_WIDTH - screenX;
+                if (remaining < (8 - startPixel)){
+                    endPixel = startPixel + remaining;
                 }
 
-                tileAddr += pixelY * 2;
+                //copy pixels from tile to framebuffer
+                for (int px = startPixel; px < endPixel; px++){
+                    fb[screenX++] = colors[tilePixels[px]];
+                }
 
-                uint8_t lo = mem.vram[tileAddr];
-                uint8_t hi = mem.vram[tileAddr + 1];
-
-                uint8_t bit = 7 - pixelX;
-                uint8_t loBit = (lo >> bit) & 1;
-                uint8_t hiBit = (hi >> bit) & 1;
-                uint8_t colorNum = (hiBit << 1) | loBit;
-                uint8_t color = getColor(bgp, colorNum);
-
-                ppu.framebuffer[ly * SCREEN_WIDTH + screenX] = color;
+                //advance window position
+                windowX += (endPixel - startPixel);
             }
         }
 
@@ -223,46 +308,87 @@ namespace gb {
             uint8_t lcdc = io[memory::IO_LCDC];
             uint8_t ly = io[memory::IO_LY];
 
+            //sprites can be 8 or 16 pixels tall
             int spriteHeight = (lcdc & 0x04) ? 16 : 8;
 
-            for (int i = 39; i >= 0; i--) {
-                int y = mem.oam[i * 4] - 16;
-                int x = mem.oam[i * 4 + 1] - 8;
-                uint8_t tileNum = mem.oam[i * 4 + 2];
-                uint8_t flags = mem.oam[i * 4 + 3];
+            //pointer to current scanline in framebuffer
+            uint8_t* fb = &ppu.framebuffer[ly * SCREEN_WIDTH];
 
-                if (ly < y || ly >= y + spriteHeight) continue;
-                if (x >= SCREEN_WIDTH) continue;
+            //loop through all 40 sprites (reverse order for priority)
+            for (int i = 39; i >= 0; i--){
+                //get sprite data from oam
+                uint8_t* sprite = &mem.oam[i << 2];
 
+                int y = sprite[0] - 16;
+                int x = sprite[1] - 8;
+                uint8_t tileNum = sprite[2];
+                uint8_t flags = sprite[3];
+
+                //skip if sprite is not on this scanline
+                if (ly < y || ly >= y + spriteHeight){
+                    continue;
+                }
+                if (x <= -8 || x >= SCREEN_WIDTH){
+                    continue;
+                }
+
+                //read sprite flags
                 bool flipX = flags & 0x20;
                 bool flipY = flags & 0x40;
                 bool priority = flags & 0x80;
                 uint8_t palette = (flags & 0x10) ? io[memory::IO_OBP1] : io[memory::IO_OBP0];
 
+                //precompute palette colors
+                uint8_t colors[4];
+                colors[0] = (palette >> 0) & 0x03;
+                colors[1] = (palette >> 2) & 0x03;
+                colors[2] = (palette >> 4) & 0x03;
+                colors[3] = (palette >> 6) & 0x03;
+
+                //calculate which row of the sprite we are drawing
                 uint8_t tileY = ly - y;
-                if (flipY) tileY = spriteHeight - 1 - tileY;
+                if (flipY){
+                    tileY = spriteHeight - 1 - tileY;
+                }
 
-                if (spriteHeight == 16) tileNum &= 0xFE;
+                //for 8x16 sprites, ignore lowest bit of the tile number
+                if (spriteHeight == 16){
+                    tileNum &= 0xFE;
+                }
 
-                uint16_t tileAddr = tileNum * 16 + tileY * 2;
-                uint8_t lo = mem.vram[tileAddr];
-                uint8_t hi = mem.vram[tileAddr + 1];
+                //fetch tile row bytes
+                uint16_t tileAddr = (tileNum << 4) + (tileY << 1);
+                uint8_t low = mem.vram[tileAddr];
+                uint8_t high = mem.vram[tileAddr + 1];
 
-                for (int px = 0; px < 8; px++) {
+                //decode tile row using the lookup table
+                uint8_t* tilePixels = tileLUT[high][low];
+
+                //draw 8 pixels of the sprite
+                for (int px = 0; px < 8; px++){
                     int screenX = x + px;
-                    if (screenX < 0 || screenX >= SCREEN_WIDTH) continue;
+                    
+                    //skip if offscreen
+                    if (screenX < 0 || screenX >= SCREEN_WIDTH){
+                        continue;
+                    }
 
-                    uint8_t bit = flipX ? px : (7 - px);
-                    uint8_t loBit = (lo >> bit) & 1;
-                    uint8_t hiBit = (hi >> bit) & 1;
-                    uint8_t colorNum = (hiBit << 1) | loBit;
+                    //handle horizontal flip
+                    int tilePx = flipX ? (7 - px) : px;
+                    uint8_t colorNum = tilePixels[tilePx];
 
-                    if (colorNum == 0) continue;
+                    //color 0 is transparant
+                    if (colorNum == 0){
+                        continue;
+                    }
 
-                    if (priority && ppu.framebuffer[ly * SCREEN_WIDTH + screenX] != 0) continue;
+                    //priority flag; sprite behind background
+                    if (priority && fb[screenX] != 0){
+                        continue;
+                    }
 
-                    uint8_t color = getColor(palette, colorNum);
-                    ppu.framebuffer[ly * SCREEN_WIDTH + screenX] = color;
+                    //write pixel to framebuffer
+                    fb[screenX] = colors[colorNum];
                 }
             }
         }

@@ -24,6 +24,13 @@ namespace gb {
         constexpr int SCANLINES_VISIBLE = 144;
         constexpr int SCANLINES_TOTAL = 154;
 
+        //new: lookup table for decoding tile pixels
+        //given 2 bytes, (low and high) from tile data, gives you all 8 color indices
+        //index: [high][low][pixel] -> color index (0 - 3)
+        extern uint8_t tileLUT[256][256][8];
+
+        void buildLUT(); //call to build lookup table
+
         void initialize(GBState& state);
         void tick(GBState& state, int cycles);
 
