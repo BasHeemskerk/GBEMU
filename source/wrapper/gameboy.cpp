@@ -131,4 +131,8 @@ const char* GameBoy::getROMTitle() const {
     return state.cartridge.title;
 }
 
+bool GameBoy::loadOpcodeTable(const char* filepath) {
+    return gb::opcode_parser::parse(filepath, state.opcodes);
+}
+
 // ... rest stays same ...

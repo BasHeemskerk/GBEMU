@@ -28,6 +28,24 @@ int main() {
     romfsInit();
     
     gb_obj.init();
+
+    //add our opcode table from romfs
+    if (!gb_obj.loadOpcodeTable("romfs:/opcodes/default.gb_opcode")) {
+        // Debug: show error
+        consoleInit(GFX_BOTTOM, NULL);
+        printf("Failed to load opcode table!\n");
+        printf("Press START to exit\n");
+        while (aptMainLoop()) {
+            hidScanInput();
+            if (hidKeysDown() & KEY_START) break;
+            gfxFlushBuffers();
+            gfxSwapBuffers();
+            gspWaitForVBlank();
+        }
+        gfxExit();
+        return 1;
+    }
+
     gui::initialize();
 
     while (aptMainLoop()) {

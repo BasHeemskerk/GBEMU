@@ -2,6 +2,7 @@
 #define GB_MEMORY_HPP
 
 #include <cstdint>
+#include "state.hpp" 
 
 namespace gb {
 
@@ -29,11 +30,38 @@ namespace gb {
         constexpr uint8_t IO_WY   = 0x4A;
         constexpr uint8_t IO_WX   = 0x4B;
 
+        //functions
         void initialize(GBState& state);
-        uint8_t read(GBState& state, uint16_t address);
-        void write(GBState& state, uint16_t address, uint8_t value);
         void doDMA(GBState& state, uint8_t value);
 
+        //full read / write with all edge cases
+        uint8_t read(GBState& state, uint16_t address);
+        void write(GBState& state, uint16_t address, uint8_t value);
+
+        //fast inline reads for hot paths
+        inline uint8_t readVRAM(GBState& state, uint16_t addr){
+            return state.memory.vram[addr & 0x1FFF];
+        }
+
+        inline uint8_t readWRAM(GBState& state, uint16_t addr){
+            return state.memory.wram[addr & 0x1FFF];
+        }
+
+        inline uint8_t readHRAM(GBState& state, uint16_t addr){
+            return state.memory.hram[addr & 0x7F];
+        }
+
+        inline void writeVRAM(GBState& state, uint16_t addr, uint8_t val){
+            state.memory.vram[addr & 0x1FFF] = val;
+        }
+
+        inline void writeWRAM(GBState& state, uint16_t addr, uint8_t val){
+            state.memory.wram[addr & 0x1FFF] = val;
+        }
+
+        inline void writeHRAM(GBState& state, uint16_t addr, uint8_t val){
+            state.memory.hram[addr & 0x7F] = val;
+        }
     }
 }
 

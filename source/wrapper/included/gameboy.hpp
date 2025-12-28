@@ -59,10 +59,12 @@ public:
     bool saveSRAM(const char* filepath);
     bool loadSRAM(const char* filepath);
 
+    bool loadOpcodeTable(const char* filepath);
+
 private:
     gb::GBState state;
     bool romLoaded;
-    
+
     void updateInput();
     void handleInterrupts();
 };

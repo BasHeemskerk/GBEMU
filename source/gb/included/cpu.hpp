@@ -19,7 +19,6 @@ namespace gb {
         void initialize(GBState& state);
         int step(GBState& state);
         int executeCB(GBState& state);
-
     }
 }
 

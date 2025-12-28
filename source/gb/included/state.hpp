@@ -2,13 +2,33 @@
 #define GB_STATE_HPP
 
 #include <cstdint>
+#include "opcode_parser.hpp"
 
 namespace gb {
 
     // CPU state
     struct CPUState {
-        uint8_t A, B, C, D, E, F, H, L;
-        uint16_t SP, PC;
+        //register pairs as unions - access as pair of individual
+        union {
+            uint16_t AF;
+            struct { uint8_t F; uint8_t A; }; //little endian, F = low, A = high
+        };
+        union {
+            uint16_t BC;
+            struct { uint8_t C; uint8_t B; };
+        };
+        union {
+            uint16_t DE;
+            struct { uint8_t E; uint8_t D; };
+        };
+        union {
+            uint16_t HL;
+            struct { uint8_t L; uint8_t H; };
+        };
+
+        uint16_t SP;
+        uint16_t PC;
+
         bool ime;
         bool imeScheduled;
         bool halted;
@@ -168,6 +188,7 @@ namespace gb {
         JoypadState joypad;
         MemoryState memory;
         CartridgeState cartridge;
+        OpcodeTable opcodes;
     };
 
 }
